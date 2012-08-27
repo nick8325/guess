@@ -25,9 +25,10 @@ import Data.List
 import Data.Ord
 import Control.Monad.State
 import Control.Monad.Writer
+import Data.Function
 
-data Term = Nil Type | Cons Term Term Type | Var String
-data Type = Unit | Int | List Type deriving Eq
+data Term = Nil Type | Cons Term Term Type | Var String deriving (Eq, Ord)
+data Type = Unit | Int | List Type deriving (Eq, Ord)
 
 uncons :: Type -> (Type, Type)
 uncons Int = (Unit, Int)
@@ -274,9 +275,12 @@ guessBase rec p = refine candidates []
 
 relevant p i = not (irrelevant p i)
 irrelevant p i =
-  and [ interpret p ts `elem` [X, interpret p ts']
-      | ts <- tests p,
-        let ts' = take i ts ++ [Nil (predType p !! i)] ++ drop (i+1) ts ]
+  all equal . groupBy ((==) `on` shell) .
+              sortBy (comparing shell) . tests $ p
+  where
+    shell ts = take i ts ++ drop (i+1) ts
+    equal tss = and (zipWith (==) xs (tail xs))
+      where xs = filter (/= X) (map (interpret p) tss)
 
 interpretBody :: ([Term] -> Range) -> Body -> [Term] -> Range
 interpretBody rec (And rhss) ts =
