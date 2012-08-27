@@ -1,5 +1,5 @@
 {-# LANGUAGE ScopedTypeVariables #-}
-module Guess where
+module Main where
 
 import Prelude hiding (pred)
 import Control.Monad
@@ -168,7 +168,7 @@ showProgram = do
     [] -> return ()
     ((n,Program ty p):ps) -> do
       put (ShowState ns ps)
-      showBody n (map VarP ty) p >>= (tell . (++ "\n"))
+      showBody n (map VarP ty) p >>= (tell . (++ "\n\n"))
       showProgram
 
 preds, vars :: [String]
@@ -313,3 +313,5 @@ sorted xs = xs == sort xs
 
 test :: Program
 test = guess sorted
+
+main = print test
