@@ -8,36 +8,58 @@ import Control.Spoon
 import Control.Monad.State
 import Control.Monad.Writer
 
-data Term = Nil | Cons Term Term deriving Eq
+data Term = Nil Type | Cons Term Term Type | Var String
+data Type = Unit | Int | List Type
+
+uncons :: Type -> (Type, Type)
+uncons Int = (Unit, Int)
+uncons Unit = error "uncons: Unit"
+uncons (List x) = (x, List x)
 
 instance Show Term where
-  showsPrec _ Nil = showString "Nil"
-  showsPrec n (Cons x y) =
+  showsPrec _ (Nil Unit) = showString "()"
+  showsPrec _ (Nil Int) = showString "0"
+  showsPrec _ (Nil (List _)) = showString "[]"
+  showsPrec n (Cons x y Int) =
+    showParen (n > 10) (showString "S " . showsPrec 11 y)
+  showsPrec n (Cons x y (List _)) =
     showParen (n > 10) (showsPrec 11 x . showString ":" . showsPrec 0 y)
+  showsPrec n (Cons x y Unit) =
+    error "show: Cons _ _ :: Unit"
+  showsPrec n (Var x) = showString x
 
 class Lisp a where
   term :: a -> Term
   back :: Term -> a
 
-instance Lisp Int where
-  term 0 = Nil
-  term n = Cons Nil (term (n-1))
+  lispType :: a -> Type
 
-  back Nil = 0
-  back (Cons Nil x) = succ (back x)
+instance Lisp Int where
+  term 0 = Nil Int
+  term n = Cons (Nil Unit) (term (n-1)) Int
+
+  back (Nil Int) = 0
+  back (Cons (Nil Unit) x Int) = succ (back x)
+
+  lispType _ = Int
 
 instance Lisp a => Lisp [a] where
-  term [] = Nil
-  term (x:xs) = Cons (term x) (term xs)
+  term xs@[] = Nil (lispType xs)
+  term (x:xs) = Cons (term x) (term xs) (lispType xs)
 
-  back Nil = []
-  back (Cons x xs) = back x:back xs
+  back (Nil _) = []
+  back (Cons x xs _) = back x:back xs
+
+  lispType xs = List (lispType (head xs))
 
 data Predicate = Predicate {
-  arity :: Int,
+  predType :: [Type],
   tests :: [[Term]],
   interpret_ :: [Term] -> Range
   }
+
+arity :: Predicate -> Int
+arity = length . predType
 
 instance Show Predicate where
   show p =
@@ -51,26 +73,32 @@ interpret p ts = fromMaybe X (teaspoon (interpret_ p ts))
 
 nil :: Int -> Predicate -> Predicate
 nil n p = Predicate {
-  arity = arity p - 1,
-  tests = [ take n ts ++ drop (n+1) ts | ts <- tests p, ts !! n == Nil ],
+  predType = take n (predType p) ++ drop (n+1) (predType p),
+  tests = [ take n ts ++ drop (n+1) ts
+          | ts <- tests p,
+            Nil _ <- [ts !! n] ],
   interpret_ = \ts -> interpret p $
-                     take n ts ++ [Nil] ++ drop n ts
+                     take n ts ++ [Nil xt] ++ drop n ts
   }
+  where xt = predType p !! n
 
 cons :: Int -> Predicate -> Predicate
 cons n p = Predicate {
-  arity = arity p + 1,
+  predType =
+     let (x, y) = uncons (predType p !! n)
+     in take n (predType p) ++ [x, y] ++ drop (n+1) (predType p),
   tests = [ take n ts ++ [x,y] ++ drop (n+1) ts
           | ts <- tests p,
-            Cons x y <- [ts !! n] ],
+            Cons x y _ <- [ts !! n] ],
   interpret_ = \ts -> interpret p $
-                      take n ts ++ [Cons (ts !! n) (ts !! (n+1))] ++
+                      take n ts ++ [Cons (ts !! n) (ts !! (n+1)) xt] ++
                       drop (n+2) ts
   }
+  where xt = predType p !! n
 
 filterP :: (Int -> Bool) -> Predicate -> Predicate
 filterP rel p = Predicate {
-  arity = length rels,
+  predType = [ predType p !! i | i <- rels ],
   tests = [ [ ts !! i | i <- rels ] | ts <- tests p ],
   interpret_ = \ts -> interpret p $
                       foldr update arb (zip rels ts)
@@ -108,7 +136,7 @@ f `consistentWith` p =
 
 except :: Predicate -> ([Term] -> Range) -> Predicate
 p `except` f = Predicate {
-  arity = arity p,
+  predType = predType p,
   tests = tests p,
   interpret_ = \ts -> interpret p ts `exceptR` f ts
   }
@@ -118,7 +146,7 @@ p `except` f = Predicate {
     T `exceptR` _ = T
     X `exceptR` _ = X
 
-data Program = Program Int Body
+data Program = Program [Type] Body
 
 data Body
   = Case Int Body Body
@@ -141,9 +169,9 @@ showProgram = do
   ShowState ns q <- get
   case q of
     [] -> return ()
-    ((n,Program a p):ps) -> do
+    ((n,Program ty p):ps) -> do
       put (ShowState ns ps)
-      showBody n (replicate a VarP) p >>= (tell . (++ "\n"))
+      showBody n (map VarP ty) p >>= (tell . (++ "\n"))
       showProgram
 
 preds, vars :: [String]
@@ -151,13 +179,13 @@ preds = infinite ["p","q","r","s"]
 vars = infinite $ ["x","y","z","w","t","u","v"]
 infinite xs = xs ++ [ x ++ y | x <- xs, y <- infinite xs ]
 
-data Pattern = NilP | ConsP | VarP
+data Pattern = NilP Type | ConsP Type | VarP Type
 
-splice :: Pattern -> Int -> [Pattern] -> [Pattern]
-splice p n (NilP:ps) = NilP:splice p n ps
-splice p n (ConsP:ps) | n >= 2 = ConsP:splice p (n-2) ps
-splice p 0 (VarP:ps) = p:ps
-splice p n (VarP:ps) = VarP:splice p (n-1) ps
+splice :: (Type -> Pattern) -> Int -> [Pattern] -> [Pattern]
+splice p n (NilP ty:ps) = NilP ty:splice p n ps
+splice p n (ConsP ty:ps) | n >= 2 = ConsP ty:splice p (n-2) ps
+splice p 0 (VarP ty:ps) = p ty:ps
+splice p n (VarP ty:ps) = VarP ty:splice p (n-1) ps
 
 showBody :: String -> [Pattern] -> Body -> ShowM String
 showBody n ctx (And []) =
@@ -173,11 +201,11 @@ showBody n ctx (Case v nil cons) = do
 
 showHead :: String -> [String] -> [Pattern] -> ShowM String
 showHead n _ [] = return n
-showHead n vs ps = return (n ++ "(" ++ intercalate "," (aux vs ps) ++ ")")
+showHead n vs ps = return (n ++ "(" ++ intercalate "," (map show (aux vs ps)) ++ ")")
   where aux vs [] = []
-        aux vs (NilP:ps) = "[]":aux vs ps
-        aux (v:vs) (VarP:ps) = v:aux vs ps
-        aux (v:w:vs) (ConsP:ps) = (v ++ ":" ++ w):aux vs ps
+        aux vs (NilP ty:ps) = Nil ty:aux vs ps
+        aux (v:vs) (VarP ty:ps) = Var v:aux vs ps
+        aux (v:w:vs) (ConsP ty:ps) = Cons (Var v) (Var w) ty:aux vs ps
 
 showRHS :: String -> [String] -> RHS -> ShowM String
 showRHS n vs (App prog ts) = do
@@ -193,7 +221,7 @@ showRHS n vs (Rec ts) =
 showRHS n vs Bot = return "False"
 
 guess :: Predicate -> Program
-guess p = Program (arity p) (aux 0 p)
+guess p = Program (predType p) (aux 0 p)
   where
     aux n p'
       | n >= arity p' = And (guessBase p p')
@@ -234,15 +262,15 @@ relevant p i = not (irrelevant p i)
 irrelevant p i =
   and [ interpret p ts `elem` [X, interpret p ts']
       | ts <- tests p,
-        let ts' = take i ts ++ [Nil] ++ drop (i+1) ts ]
+        let ts' = take i ts ++ [Nil (predType p !! i)] ++ drop (i+1) ts ]
 
 interpretBody :: ([Term] -> Range) -> Body -> [Term] -> Range
 interpretBody rec (And rhss) ts =
   foldr andR T [ interpretRHS rec rhs ts | rhs <- rhss ]
 interpretBody rec (Case i n c) ts =
   case ts !! i of
-    Nil -> interpretBody rec n (take i ts ++ drop (i+1) ts)
-    Cons x xs ->
+    Nil _ -> interpretBody rec n (take i ts ++ drop (i+1) ts)
+    Cons x xs _ ->
       interpretBody rec c (take i ts ++ [x, xs] ++ drop (i+1) ts)
 
 interpretProg :: Program -> [Term] -> Range
@@ -264,14 +292,14 @@ lists = concat [ map term (sequence (replicate i [0..4 :: Int])) | i <- [0..4] ]
 
 leq :: Predicate
 leq = Predicate {
-  arity = 2,
+  predType = [Int, Int],
   tests = sequence [ints, ints],
   interpret_ = \[x, y] -> fromBool $ (back x :: [Int]) <= back y
   }
 
 sorted :: Predicate
 sorted = Predicate {
-  arity = 1,
+  predType = [List Int],
   tests = sequence [lists],
   interpret_ = \[xs] ->
     let xs' = back xs :: [Int] in
