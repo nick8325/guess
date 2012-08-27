@@ -6,7 +6,6 @@ import Control.Monad
 import Data.Maybe
 import Data.List
 import Data.Ord
-import Control.Spoon
 import Control.Monad.State
 import Control.Monad.Writer
 
@@ -60,7 +59,7 @@ instance Lisp a => Lisp [a] where
 data Predicate = Predicate {
   predType :: [Type],
   tests :: [[Term]],
-  interpret_ :: [Term] -> Range
+  interpret :: [Term] -> Range
   }
 
 arity :: Predicate -> Int
@@ -73,16 +72,13 @@ instance Show Predicate where
       [ intercalate ", " (map show ts) ++ " -> " ++ show (interpret p ts) | ts <- tests p ] ++
       ["}"]
 
-interpret :: Predicate -> [Term] -> Range
-interpret p ts = fromMaybe X (teaspoon (interpret_ p ts))
-
 nil :: Int -> Predicate -> Predicate
 nil n p = Predicate {
   predType = take n (predType p) ++ drop (n+1) (predType p),
   tests = [ take n ts ++ drop (n+1) ts
           | ts <- tests p,
             Nil _ <- [ts !! n] ],
-  interpret_ = \ts -> interpret p $
+  interpret = \ts -> interpret p $
                      take n ts ++ [Nil xt] ++ drop n ts
   }
   where xt = predType p !! n
@@ -95,7 +91,7 @@ cons n p = Predicate {
   tests = [ take n ts ++ [x,y] ++ drop (n+1) ts
           | ts <- tests p,
             Cons x y _ <- [ts !! n] ],
-  interpret_ = \ts -> interpret p $
+  interpret = \ts -> interpret p $
                       take n ts ++ [Cons (ts !! n) (ts !! (n+1)) xt] ++
                       drop (n+2) ts
   }
@@ -105,7 +101,7 @@ filterP :: (Int -> Bool) -> Predicate -> Predicate
 filterP rel p = Predicate {
   predType = [ predType p !! i | i <- rels ],
   tests = [ [ ts !! i | i <- rels ] | ts <- tests p ],
-  interpret_ = \ts -> interpret p $
+  interpret = \ts -> interpret p $
                       foldr update arb (zip rels ts)
   }
   where rel' x = x `elem` rels
@@ -143,7 +139,7 @@ except :: Predicate -> ([Term] -> Range) -> Predicate
 p `except` f = Predicate {
   predType = predType p,
   tests = tests p,
-  interpret_ = \ts -> interpret p ts `exceptR` f ts
+  interpret = \ts -> interpret p ts `exceptR` f ts
   }
   where
     F `exceptR` F = X
@@ -292,24 +288,24 @@ interpretRHS p (Rec vs) ts =
 class Pred a where
   predType_ :: a -> [Type]
   tests_ :: a -> [[Term]]
-  interpret__ :: a -> [Term] -> Range
+  interpret_ :: a -> [Term] -> Range
 
 instance Pred Bool where
   predType_ _ = []
   tests_ _ = [[]]
-  interpret__ x [] = fromBool x
+  interpret_ x [] = fromBool x
 
 instance (Lisp a, Pred b) => Pred (a -> b) where
   predType_ (f :: a -> b) = lispType (undefined :: a):predType_ (undefined :: b)
   tests_ (f :: a -> b) = liftM2 (:) (map term (sample :: [a])) (tests_ (undefined :: b))
-  interpret__ f (x:xs) =
-    interpret__ (f (back x)) xs
+  interpret_ f (x:xs) =
+    interpret_ (f (back x)) xs
 
 pred :: Pred a => a -> Predicate
 pred x = Predicate {
   predType = predType_ x,
   tests = tests_ x,
-  interpret_ = interpret__ x
+  interpret = interpret_ x
   }
 
 guess :: Pred a => a -> Program
