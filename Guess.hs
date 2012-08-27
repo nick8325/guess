@@ -87,7 +87,7 @@ instance Show Predicate where
   show p =
     unlines $
       ["{"] ++
-      [ intercalate ", " (map show ts) ++ " -> " ++ show (interpret p ts) | ts <- tests p ] ++
+      [ intercalate ", " (map show ts) ++ " -> " ++ show (interpret p ts) | ts <- tests p, interpret p ts /= X ] ++
       ["}"]
 
 nil :: Int -> Predicate -> Predicate
