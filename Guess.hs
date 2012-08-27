@@ -22,7 +22,7 @@ instance Show Term where
   showsPrec _ (Nil Int) = showString "0"
   showsPrec _ (Nil (List _)) = showString "[]"
   showsPrec n (Cons x y Int) =
-    showParen (n > 10) (showString "S " . showsPrec 11 y)
+    showParen (n > 10) (showsPrec 11 y . showString "+1")
   showsPrec n (Cons x y (List _)) =
     showParen (n > 10) (showsPrec 11 x . showString ":" . showsPrec 0 y)
   showsPrec n (Cons x y Unit) =
