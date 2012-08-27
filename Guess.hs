@@ -2,6 +2,18 @@
 -- When inventing a predicate p(x:y,z) -> q(x,y,z),
 -- see if we can split it into q(x,y) & r(y,z).
 -- Can check this by exhaustive testing.
+--
+-- Allow recursion to be founded on size of args for not . sorted and allLeq.
+--
+-- allLeq :: Int -> [Int] -> Bool
+-- allLeq x xs = all (x <=) xs
+-- requires allLeq (s x) (y:ys) => allLeq (s x) ys
+--
+-- Perhaps remove X and instead just remove the Xs from the domain.
+
+-- guess (\x y -> (x :: [Int]) == y)
+-- This one needs lossless-join decomposition:
+--   p(x:y,z:w) = p(w,y) && q(x,y,z,w)
 
 {-# LANGUAGE ScopedTypeVariables #-}
 module Main where
