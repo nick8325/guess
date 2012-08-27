@@ -111,10 +111,6 @@ filterP rel p = Predicate {
 
 data Range = F | X | T deriving (Eq, Show)
 
-fromBool :: Bool -> Range
-fromBool False = F
-fromBool True = T
-
 F `andR` _ = F
 _ `andR` F = F
 T `andR` T = T
@@ -293,7 +289,8 @@ class Pred a where
 instance Pred Bool where
   predType_ _ = []
   tests_ _ = [[]]
-  interpret_ x [] = fromBool x
+  interpret_ False [] = F
+  interpret_ True [] = T
 
 instance (Lisp a, Pred b) => Pred (a -> b) where
   predType_ (f :: a -> b) = lispType (undefined :: a):predType_ (undefined :: b)
