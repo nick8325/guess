@@ -4,7 +4,6 @@ import Control.Monad
 import Data.Maybe
 import Data.List
 import Data.Ord
-import Debug.Trace
 import Control.Spoon
 import Control.Monad.State
 import Control.Monad.Writer
@@ -119,8 +118,10 @@ p `except` f = Predicate {
     T `exceptR` _ = T
     X `exceptR` _ = X
 
-data Program
-  = Case Int Program Program
+data Program = Program Int Body
+
+data Body
+  = Case Int Body Body
   | And [RHS]
 
 data RHS = App Program [Int] | Rec [Int] | Bot deriving Show
@@ -140,9 +141,9 @@ showProgram = do
   ShowState ns q <- get
   case q of
     [] -> return ()
-    ((n,p):ps) -> do
+    ((n,Program a p):ps) -> do
       put (ShowState ns ps)
-      showProgram1 n [] p >>= (tell . (++ "\n"))
+      showBody n (replicate a VarP) p >>= (tell . (++ "\n"))
       showProgram
 
 preds, vars :: [String]
@@ -157,18 +158,17 @@ splice p n (NilP:ps) = NilP:splice p n ps
 splice p n (ConsP:ps) | n >= 2 = ConsP:splice p (n-2) ps
 splice p 0 (VarP:ps) = p:ps
 splice p n (VarP:ps) = VarP:splice p (n-1) ps
-splice p n [] = replicate n VarP ++ [p]
 
-showProgram1 :: String -> [Pattern] -> Program -> ShowM String
-showProgram1 n ctx (And []) =
+showBody :: String -> [Pattern] -> Body -> ShowM String
+showBody n ctx (And []) =
   liftM2 (++) (showHead n vars ctx) (return " = True")
-showProgram1 n ctx (And rhss) = do
+showBody n ctx (And rhss) = do
   head <- showHead n vars ctx
   xs <- mapM (showRHS n vars) rhss
   return (head ++ " = " ++ intercalate " && " xs)
-showProgram1 n ctx (Case v nil cons) = do
-  nil' <- showProgram1 n (splice NilP v ctx) nil
-  cons' <- showProgram1 n (splice ConsP v ctx) cons
+showBody n ctx (Case v nil cons) = do
+  nil' <- showBody n (splice NilP v ctx) nil
+  cons' <- showBody n (splice ConsP v ctx) cons
   return (nil' ++ "\n" ++ cons')
 
 showHead :: String -> [String] -> [Pattern] -> ShowM String
@@ -193,7 +193,7 @@ showRHS n vs (Rec ts) =
 showRHS n vs Bot = return "False"
 
 guess :: Predicate -> Program
-guess p = aux 0 p
+guess p = Program (arity p) (aux 0 p)
   where
     aux n p'
       | n >= arity p' = And (guessBase p p')
@@ -205,13 +205,13 @@ guessBase :: Predicate -> Predicate -> [RHS]
 guessBase rec p = refine candidates []
   where
     refine _ cs
-      | interpretSubprog (interpret rec) (And cs) `implements` p = cs
+      | interpretBody (interpret rec) (And cs) `implements` p = cs
     refine [] cs =
       refine (App (guess (filterP (relevant p') p'))
               (filter (relevant p') [0..arity p-1]):cs) []
-      where p' = p `except` interpretSubprog (interpret rec) (And cs)
+      where p' = p `except` interpretBody (interpret rec) (And cs)
     refine (c:cs) cs'
-      | interpretRHS (interpret rec) c `redundantIn` interpretSubprog (interpret rec) (And cs') =
+      | interpretRHS (interpret rec) c `redundantIn` interpretBody (interpret rec) (And cs') =
           refine cs cs'
       | interpretRHS (interpret rec) c `consistentWith` p =
           refine cs (c:cs')
@@ -232,25 +232,22 @@ guessBase rec p = refine candidates []
 
 relevant p i = not (irrelevant p i)
 irrelevant p i =
-  and [ let x = interpret p ts `elem` [X, interpret p ts']
-            msg = show ts ++ " -> " ++ show (interpret p ts) ++ ", " ++
-                  show ts' ++ " -> " ++ show (interpret p ts')
-        in if x || length ts /= 3 then x else msg `traceShow` x
+  and [ interpret p ts `elem` [X, interpret p ts']
       | ts <- tests p,
         let ts' = take i ts ++ [Nil] ++ drop (i+1) ts ]
 
-interpretSubprog :: ([Term] -> Range) -> Program -> [Term] -> Range
-interpretSubprog rec (And rhss) ts =
+interpretBody :: ([Term] -> Range) -> Body -> [Term] -> Range
+interpretBody rec (And rhss) ts =
   foldr andR T [ interpretRHS rec rhs ts | rhs <- rhss ]
-interpretSubprog rec (Case i n c) ts =
+interpretBody rec (Case i n c) ts =
   case ts !! i of
-    Nil -> interpretSubprog rec n (take i ts ++ drop (i+1) ts)
+    Nil -> interpretBody rec n (take i ts ++ drop (i+1) ts)
     Cons x xs ->
-      interpretSubprog rec c (take i ts ++ [x, xs] ++ drop (i+1) ts)
+      interpretBody rec c (take i ts ++ [x, xs] ++ drop (i+1) ts)
 
 interpretProg :: Program -> [Term] -> Range
-interpretProg prog = x
-  where x = interpretSubprog x prog
+interpretProg (Program _ body) = x
+  where x = interpretBody x body
 
 interpretRHS :: ([Term] -> Range) -> RHS -> [Term] -> Range
 interpretRHS p Bot _ = F
@@ -258,27 +255,6 @@ interpretRHS p (App prog vs) ts =
   interpretProg prog [ ts !! v | v <- vs ]
 interpretRHS p (Rec vs) ts =
   p [ ts !! v | v <- vs ]
-
-shrink :: Predicate -> Program -> Program
-shrink p prog =
-  case [ prog' | prog' <- candidates prog,
-                 interpretProg prog' `implements` p ] of
-    [] -> prog
-    (prog':_) -> shrink p prog'
-
-candidates :: Program -> [Program]
-candidates (Case v n c) =
-  [ Case v n' c | n' <- candidates n ] ++
-  [ Case v n c' | c' <- candidates c ]
-candidates (And rhss) =
-  [ And $ take i rhss ++ drop (i+1) rhss | i <- [0..length rhss-1] ] ++
-  [ And $ take i rhss ++ [rhs'] ++ drop (i+1) rhss |
-    i <- [0..length rhss-1],
-    rhs' <- candidateRHSs (rhss !! i) ]
-
-candidateRHSs :: RHS -> [RHS]
-candidateRHSs Bot = []
-candidateRHSs _ = [Bot]
 
 ints :: [Term]
 ints = map term [0..4 :: Int]
