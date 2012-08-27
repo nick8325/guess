@@ -1,5 +1,7 @@
+{-# LANGUAGE ScopedTypeVariables #-}
 module Guess where
 
+import Prelude hiding (pred)
 import Control.Monad
 import Data.Maybe
 import Data.List
@@ -33,6 +35,7 @@ class Lisp a where
   back :: Term -> a
 
   lispType :: a -> Type
+  sample :: [a]
 
 instance Lisp Int where
   term 0 = Nil Int
@@ -42,6 +45,7 @@ instance Lisp Int where
   back (Cons (Nil Unit) x Int) = succ (back x)
 
   lispType _ = Int
+  sample = [0..3]
 
 instance Lisp a => Lisp [a] where
   term xs@[] = Nil (lispType xs)
@@ -51,6 +55,7 @@ instance Lisp a => Lisp [a] where
   back (Cons x xs _) = back x:back xs
 
   lispType xs = List (lispType (head xs))
+  sample = concat [ sequence (replicate i sample) | i <- [0..4] ]
 
 data Predicate = Predicate {
   predType :: [Type],
@@ -220,8 +225,8 @@ showRHS n vs (Rec ts) =
     _ -> return (n ++ "(" ++ intercalate "," [ vs !! t | t <- ts ] ++ ")")
 showRHS n vs Bot = return "False"
 
-guess :: Predicate -> Program
-guess p = Program (predType p) (aux 0 p)
+guess_ :: Predicate -> Program
+guess_ p = Program (predType p) (aux 0 p)
   where
     aux n p'
       | n >= arity p' = And (guessBase p p')
@@ -235,7 +240,7 @@ guessBase rec p = refine candidates []
     refine _ cs
       | interpretBody (interpret rec) (And cs) `implements` p = cs
     refine [] cs =
-      refine (App (guess (filterP (relevant p') p'))
+      refine (App (guess_ (filterP (relevant p') p'))
               (filter (relevant p') [0..arity p-1]):cs) []
       where p' = p `except` interpretBody (interpret rec) (And cs)
     refine (c:cs) cs'
@@ -284,28 +289,34 @@ interpretRHS p (App prog vs) ts =
 interpretRHS p (Rec vs) ts =
   p [ ts !! v | v <- vs ]
 
-ints :: [Term]
-ints = map term [0..4 :: Int]
+class Pred a where
+  predType_ :: a -> [Type]
+  tests_ :: a -> [[Term]]
+  interpret__ :: a -> [Term] -> Range
 
-lists :: [Term]
-lists = concat [ map term (sequence (replicate i [0..4 :: Int])) | i <- [0..4] ]
+instance Pred Bool where
+  predType_ _ = []
+  tests_ _ = [[]]
+  interpret__ x [] = fromBool x
 
-leq :: Predicate
-leq = Predicate {
-  predType = [Int, Int],
-  tests = sequence [ints, ints],
-  interpret_ = \[x, y] -> fromBool $ (back x :: [Int]) <= back y
+instance (Lisp a, Pred b) => Pred (a -> b) where
+  predType_ (f :: a -> b) = lispType (undefined :: a):predType_ (undefined :: b)
+  tests_ (f :: a -> b) = liftM2 (:) (map term (sample :: [a])) (tests_ (undefined :: b))
+  interpret__ f (x:xs) =
+    interpret__ (f (back x)) xs
+
+pred :: Pred a => a -> Predicate
+pred x = Predicate {
+  predType = predType_ x,
+  tests = tests_ x,
+  interpret_ = interpret__ x
   }
 
-sorted :: Predicate
-sorted = Predicate {
-  predType = [List Int],
-  tests = sequence [lists],
-  interpret_ = \[xs] ->
-    let xs' = back xs :: [Int] in
-    fromBool (sort xs' == xs')
-  }
+guess :: Pred a => a -> Program
+guess x = guess_ (pred x)
 
-test, test2 :: Program
-test = guess leq
-test2 = guess sorted
+sorted :: [Int] -> Bool
+sorted xs = xs == sort xs
+
+test :: Program
+test = guess sorted
