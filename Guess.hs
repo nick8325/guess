@@ -1,3 +1,8 @@
+-- To do:
+-- When inventing a predicate p(x:y,z) -> q(x,y,z),
+-- see if we can split it into q(x,y) & r(y,z).
+-- Can check this by exhaustive testing.
+
 {-# LANGUAGE ScopedTypeVariables #-}
 module Main where
 
