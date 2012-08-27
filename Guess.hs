@@ -9,7 +9,7 @@ import Control.Monad.State
 import Control.Monad.Writer
 
 data Term = Nil Type | Cons Term Term Type | Var String
-data Type = Unit | Int | List Type
+data Type = Unit | Int | List Type deriving Eq
 
 uncons :: Type -> (Type, Type)
 uncons Int = (Unit, Int)
@@ -255,7 +255,7 @@ guessBase rec p = refine candidates []
       Bot:
       [ Rec vs
       | vs <- map head . group . map (take (arity rec)) . permutations $ [0..arity p-1],
-        length vs == arity rec,
+        [ predType p !! v | v <- vs ] == predType rec,
         arity rec > 0 ]
 
 relevant p i = not (irrelevant p i)
