@@ -11,10 +11,6 @@
 --
 -- Perhaps remove X and instead just remove the Xs from the domain.
 
--- guess (\x y -> (x :: [Int]) == y)
--- This one needs lossless-join decomposition:
---   p(x:y,z:w) = p(w,y) && q(x,y,z,w)
-
 {-# LANGUAGE ScopedTypeVariables #-}
 module Main where
 
@@ -332,7 +328,4 @@ guess x = guess_ (pred x)
 sorted :: [Int] -> Bool
 sorted xs = xs == sort xs
 
-test :: Program
-test = guess sorted
-
-main = print test
+main = print (guess sorted)
