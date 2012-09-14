@@ -189,9 +189,9 @@ showProgram = do
       showProgram
 
 preds, vars :: [String]
-preds = infinite ["p","q","r","s"]
-vars = infinite $ ["x","y","z","w","t","u","v"]
-infinite xs = xs ++ [ x ++ y | x <- xs, y <- infinite xs ]
+preds = infinite ['p','q','r','s']
+vars = infinite $ ['x','y','z','w','t','u','v']
+infinite xs = concat [ replicateM n xs | n <- [1..] ]
 
 data Pattern = NilP Type | ConsP Type | VarP Type
 
