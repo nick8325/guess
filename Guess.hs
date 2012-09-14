@@ -361,8 +361,32 @@ pred x = Predicate {
   interpret = interpret_ x
   }
 
+shrink :: Predicate -> Program -> Program
+shrink pred p =
+  case [ p' | p' <- candidates p, interpretProg p' `implements` pred ] of
+    [] -> p
+    (p':_) -> shrink pred p'
+
+candidates (Program ts x) = map (Program ts) (candidatesBody x)
+
+candidatesBody (Case n l r) =
+  [ Case n l' r | l' <- candidatesBody l ] ++
+  [ Case n l r' | r' <- candidatesBody r ]
+candidatesBody (And rs) = map And (candidatesRHSs rs)
+
+candidatesRHSs [] = []
+candidatesRHSs (r:rs) =
+  rs:
+  map (:rs) (candidatesRHS r) ++
+  map (r:) (candidatesRHSs rs)
+
+candidatesRHS Bot = []
+candidatesRHS (App prog ts) =
+  Bot:[ App prog' ts | prog' <- candidates prog ]
+candidatesRHS _ = [Bot]
+
 guess :: Pred a => a -> Program
-guess x = guess_ 10 (pred x)
+guess x = shrink (pred x) (guess_ 10 (pred x))
 
 sorted :: [Int] -> Bool
 sorted xs = xs == sort xs
