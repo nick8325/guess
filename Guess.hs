@@ -172,21 +172,21 @@ data Arg = Arg Int | ConsA Int Int Type deriving Eq
 type ShowM = StateT ShowState (Writer String)
 data ShowState = ShowState {
   names :: [String],
-  queue :: [(String, Program)]
+  queue :: [(String, Bool, Program)]
   }
 
 instance Show Program where
   show p =
-    execWriter (execStateT showProgram (ShowState (tail preds) [(head preds, p)]))
+    execWriter (execStateT showProgram (ShowState (tail preds) [(head preds, True, p)]))
 
 showProgram :: ShowM ()
 showProgram = do
   ShowState ns q <- get
   case q of
     [] -> return ()
-    ((n,Program ty p):ps) -> do
+    ((n,pol,Program ty p):ps) -> do
       put (ShowState ns ps)
-      showBody n (map VarP ty) p >>= (tell . (++ "\n\n"))
+      showBody pol n (map VarP ty) p >>= (tell . (++ "\n\n"))
       showProgram
 
 preds, vars :: [String]
@@ -202,16 +202,16 @@ splice p n (ConsP ty:ps) | n >= 2 = ConsP ty:splice p (n-2) ps
 splice p 0 (VarP ty:ps) = p ty:ps
 splice p n (VarP ty:ps) = VarP ty:splice p (n-1) ps
 
-showBody :: String -> [Pattern] -> Body -> ShowM String
-showBody n ctx (And []) =
-  liftM2 (++) (showHead n vars ctx) (return " = True")
-showBody n ctx (And rhss) = do
+showBody :: Bool -> String -> [Pattern] -> Body -> ShowM String
+showBody pol n ctx (And []) =
+  liftM2 (++) (showHead n vars ctx) (return $ " = " ++ if pol then "True" else "False")
+showBody pol n ctx (And rhss) = do
   head <- showHead n vars ctx
-  xs <- mapM (showRHS n vars) rhss
-  return (head ++ " = " ++ intercalate " && " xs)
-showBody n ctx (Case v nil cons) = do
-  nil' <- showBody n (splice NilP v ctx) nil
-  cons' <- showBody n (splice ConsP v ctx) cons
+  xs <- mapM (showRHS pol n vars) rhss
+  return (head ++ " = " ++ intercalate (if pol then " && " else " || ") xs)
+showBody pol n ctx (Case v nil cons) = do
+  nil' <- showBody pol n (splice NilP v ctx) nil
+  cons' <- showBody pol n (splice ConsP v ctx) cons
   return (nil' ++ "\n" ++ cons')
 
 showHead :: String -> [String] -> [Pattern] -> ShowM String
@@ -222,19 +222,19 @@ showHead n vs ps = return (n ++ "(" ++ intercalate "," (map show (aux vs ps)) ++
         aux (v:vs) (VarP ty:ps) = Var v:aux vs ps
         aux (v:w:vs) (ConsP ty:ps) = Cons (Var v) (Var w) ty:aux vs ps
 
-showRHS :: String -> [String] -> RHS -> ShowM String
-showRHS n vs (Not prog) = fmap ('~':) (showRHS n vs prog)
-showRHS n vs (App prog ts) = do
+showRHS :: Bool -> String -> [String] -> RHS -> ShowM String
+showRHS pol n vs (Not prog) = showRHS (not pol) n vs prog
+showRHS pol n vs (App prog ts) = do
   ShowState (n':ns) ps <- get
-  put (ShowState ns (ps ++ [(n', prog)]))
+  put (ShowState ns (ps ++ [(n', pol, prog)]))
   case ts of
     [] -> return n'
     _ -> return (n' ++ "(" ++ intercalate "," [ showArg vs t | t <- ts ] ++ ")")
-showRHS n vs (Rec ts) =
+showRHS pol n vs (Rec ts) =
   case ts of
     [] -> return n
     _ -> return (n ++ "(" ++ intercalate "," [ showArg vs t | t <- ts ] ++ ")")
-showRHS n vs Bot = return "False"
+showRHS pol n vs Bot = return (if pol then "False" else "True")
 
 showArg :: [String] -> Arg -> String
 showArg vs (ConsA x y t) = show (Cons (Var (vs !! x)) (Var (vs !! y)) t)
@@ -278,7 +278,7 @@ guessBase depth constrs rec p = refine depth candidates []
 
     candidates =
       Bot:
-      map Rec (sortBy (comparing (length . map argConstrs)) tss)
+      map Rec (sortBy (comparing (sum . map argConstrs)) tss)
       where
         tss =
           [ ts
@@ -398,7 +398,7 @@ allLeq :: Int -> [Int] -> Bool
 allLeq x xs = all (x <=) xs
 
 append :: [Int] -> [Int] -> [Int] -> Bool
-append xs ys zs = xs ++ ys == zs
+append = predicate2 (++)
 
 zipRev :: [Int] -> [Int] -> Bool
 zipRev xs ys =
@@ -413,4 +413,16 @@ zipRev xs ys =
 zipp [] [] = []
 zipp (x:xs) (y:ys) = (x,y):zipp xs ys
 
-main = print (guess zipRev)
+lastDrop :: Int -> [Int] -> Bool
+lastDrop n xs =
+  case teaspoon (last (drop n xs) == last xs) of
+    Nothing -> False
+    Just x -> x
+
+predicate :: Eq b => (a -> b) -> (a -> b -> Bool)
+predicate f x y = f x == y
+
+predicate2 :: Eq c => (a -> b -> c) -> (a -> b -> c -> Bool)
+predicate2 f = curry (predicate (uncurry f))
+
+main = print (guess ((<=) :: [Int] -> [Int] -> Bool))
