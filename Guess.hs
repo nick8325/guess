@@ -3,12 +3,6 @@
 -- see if we can split it into q(x,y) & r(y,z).
 -- Can check this by exhaustive testing.
 --
--- Allow recursion to be founded on size of args for not . sorted and allLeq.
---
--- allLeq :: Int -> [Int] -> Bool
--- allLeq x xs = all (x <=) xs
--- requires allLeq (s x) (y:ys) => allLeq (s x) ys
---
 -- Perhaps remove X and instead just remove the Xs from the domain.
 
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -163,7 +157,9 @@ data Body
   = Case Int Body Body
   | And [RHS]
 
-data RHS = App Program [Int] | Rec [Int] | Bot deriving Show
+data RHS = App Program [Arg] | Rec [Arg] | Bot
+
+data Arg = Arg Int | ConsA Int Int Type deriving Eq
 
 type ShowM = StateT ShowState (Writer String)
 data ShowState = ShowState {
@@ -224,12 +220,16 @@ showRHS n vs (App prog ts) = do
   put (ShowState ns (ps ++ [(n', prog)]))
   case ts of
     [] -> return n'
-    _ -> return (n' ++ "(" ++ intercalate "," [ vs !! t | t <- ts ] ++ ")")
+    _ -> return (n' ++ "(" ++ intercalate "," [ showArg vs t | t <- ts ] ++ ")")
 showRHS n vs (Rec ts) =
   case ts of
     [] -> return n
-    _ -> return (n ++ "(" ++ intercalate "," [ vs !! t | t <- ts ] ++ ")")
+    _ -> return (n ++ "(" ++ intercalate "," [ showArg vs t | t <- ts ] ++ ")")
 showRHS n vs Bot = return "False"
+
+showArg :: [String] -> Arg -> String
+showArg vs (ConsA x y t) = show (Cons (Var (vs !! x)) (Var (vs !! y)) t)
+showArg vs (Arg x) = vs !! x
 
 guess_ :: Predicate -> Program
 guess_ p = Program (predType p) (aux 0 p)
@@ -247,7 +247,7 @@ guessBase rec p = refine candidates []
       | interpretBody (interpret rec) (And cs) `implements` p = cs
     refine [] cs =
       refine (App (guess_ (filterP (relevant p') p'))
-              (filter (relevant p') [0..arity p-1]):cs) []
+              (map Arg (filter (relevant p') [0..arity p-1])):cs) []
       where p' = p `except` interpretBody (interpret rec) (And cs)
     refine (c:cs) cs'
       | interpretRHS (interpret rec) c `redundantIn` interpretBody (interpret rec) (And cs') =
@@ -264,10 +264,30 @@ guessBase rec p = refine candidates []
 
     candidates =
       Bot:
-      [ Rec vs
-      | vs <- map head . group . map (take (arity rec)) . permutations $ [0..arity p-1],
-        [ predType p !! v | v <- vs ] == predType rec,
-        arity rec > 0 ]
+      map Rec (sortBy (comparing (length . map argVars)) tss)
+      where
+        tss =
+          [ ts
+          | vs <- permutations (zip [0..] (predType p)),
+            ts <- map head . group . map (take (arity rec)) . collect $ vs,
+            [ argType (predType p) t | t <- ts ] == predType rec,
+            sum (map argVars ts) < arity p,
+            arity rec > 0 ]
+
+    collect [] = return []
+    collect ((t,ty):ts) = pair ts `mplus` fmap (Arg t:) (collect ts)
+      where
+        pair ((u,Int):ts)
+          | ty == Unit = fmap (ConsA t u Int:) (collect ts)
+        pair ((u,ty'):ts)
+          | ty' == List ty = fmap (ConsA t u ty':) (collect ts)
+        pair _ = mzero
+
+    argType ts (Arg x) = ts !! x
+    argType ts (ConsA _ _ t) = t
+
+    argVars Arg{} = 1
+    argVars ConsA{} = 2
 
 relevant p i = not (irrelevant p i)
 irrelevant p i =
@@ -294,9 +314,12 @@ interpretProg (Program _ body) = x
 interpretRHS :: ([Term] -> Range) -> RHS -> [Term] -> Range
 interpretRHS p Bot _ = F
 interpretRHS p (App prog vs) ts =
-  interpretProg prog [ ts !! v | v <- vs ]
+  interpretProg prog [ interpretArg ts v | v <- vs ]
 interpretRHS p (Rec vs) ts =
-  p [ ts !! v | v <- vs ]
+  p [ interpretArg ts v | v <- vs ]
+
+interpretArg ts (Arg v) = ts !! v
+interpretArg ts (ConsA x y t) = Cons (ts !! x) (ts !! y) t
 
 class Pred a where
   predType_ :: a -> [Type]
