@@ -16,6 +16,7 @@ import Data.Ord
 import Control.Monad.State
 import Control.Monad.Writer
 import Data.Function
+import Control.Spoon
 
 data Term = Nil Type | Cons Term Term Type | Var String deriving (Eq, Ord)
 data Type = Unit | Int | List Type deriving (Eq, Ord)
@@ -377,6 +378,15 @@ append xs ys zs = xs ++ ys == zs
 
 zipRev :: [Int] -> [Int] -> Bool
 zipRev xs ys =
-  zip (reverse xs) (reverse ys) == reverse (zip xs ys)
+  zipp (reverse xs) (reverse ys) =!=
+    reverse (zipp xs ys)
+  where
+    x =!= y =
+      case teaspoon (x == y) of
+        Nothing -> False
+        Just x -> x
 
-main = print (guess sorted)
+zipp [] [] = []
+zipp (x:xs) (y:ys) = (x,y):zipp xs ys
+
+main = print (guess zipRev)
