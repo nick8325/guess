@@ -239,31 +239,35 @@ showArg :: [String] -> Arg -> String
 showArg vs (ConsA x y t) = show (Cons (Var (vs !! x)) (Var (vs !! y)) t)
 showArg vs (Arg x) = vs !! x
 
-guess_ :: Predicate -> Program
-guess_ p = Program (predType p) (aux 0 0 p)
+guess_ :: Int -> Predicate -> Program
+guess_ d p = Program (predType p) (aux 0 0 p)
   where
     aux n m p'
-      | n >= arity p' = And (guessBase m p p')
+      | n >= arity p' = And (guessBase d m p p')
       | irrelevant p' n = aux (n+1) m p'
       | otherwise = Case n (aux n m (nil n p'))
                            (aux (n+2) (m+1) (cons n p'))
 
-guessBase :: Int -> Predicate -> Predicate -> [RHS]
-guessBase constrs rec p = refine candidates []
+guessBase :: Int -> Int -> Predicate -> Predicate -> [RHS]
+guessBase depth constrs rec p = refine depth candidates []
   where
-    refine _ cs
+    refine _ _ cs
       | interpretBody (interpret rec) (And cs) `implements` p = cs
-    refine [] cs =
-      refine (Not
-              (App (guess_ (filterP (relevant p') p'))
-               (map Arg (filter (relevant p') [0..arity p-1]))):cs) []
-      where p' = notP (p `except` interpretBody (interpret rec) (And cs))
-    refine (c:cs) cs'
+    refine 0 [] cs = cs
+    refine d [] cs = refine 0 synthed cs
+      where p' = p `except` interpretBody (interpret rec) (And cs)
+            g d p' =
+              App (guess_ d (filterP (relevant p') p'))
+                (map Arg (filter (relevant p') [0..arity p-1]))
+            synthed = concat [
+              [ g i p', Not (g i (notP p')) ]
+              | i <- [0..depth-1] ]
+    refine d (c:cs) cs'
       | interpretRHS (interpret rec) c `redundantIn` interpretBody (interpret rec) (And cs') =
-          refine cs cs'
+          refine d cs cs'
       | interpretRHS (interpret rec) c `consistentWith` p =
-          refine cs (c:cs')
-      | otherwise = refine cs cs'
+          refine d cs (c:cs')
+      | otherwise = refine d cs cs'
 
     redundantIn prog prog' =
       and [ subsumed (interpret p ts) (prog ts) (prog' ts) | ts <- tests p ]
@@ -357,7 +361,7 @@ pred x = Predicate {
   }
 
 guess :: Pred a => a -> Program
-guess x = guess_ (pred x)
+guess x = guess_ 10 (pred x)
 
 sorted :: [Int] -> Bool
 sorted xs = xs == sort xs
@@ -370,5 +374,9 @@ allLeq x xs = all (x <=) xs
 
 append :: [Int] -> [Int] -> [Int] -> Bool
 append xs ys zs = xs ++ ys == zs
+
+zipRev :: [Int] -> [Int] -> Bool
+zipRev xs ys =
+  zip (reverse xs) (reverse ys) == reverse (zip xs ys)
 
 main = print (guess sorted)
