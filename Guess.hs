@@ -351,4 +351,13 @@ guess x = guess_ (pred x)
 sorted :: [Int] -> Bool
 sorted xs = xs == sort xs
 
+sortPred :: [Int] -> [Int] -> Bool
+sortPred xs ys = ys == sort xs
+
+allLeq :: Int -> [Int] -> Bool
+allLeq x xs = all (x <=) xs
+
+append :: [Int] -> [Int] -> [Int] -> Bool
+append xs ys zs = xs ++ ys == zs
+
 main = print (guess sorted)
