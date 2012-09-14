@@ -105,6 +105,9 @@ cons n p = Predicate {
   }
   where xt = predType p !! n
 
+notP :: Predicate -> Predicate
+notP p = p { interpret = notR . interpret p }
+
 filterP :: (Int -> Bool) -> Predicate -> Predicate
 filterP rel p = Predicate {
   predType = [ predType p !! i | i <- rels ],
@@ -123,6 +126,10 @@ F `andR` _ = F
 _ `andR` F = F
 T `andR` T = T
 _ `andR` _ = X
+
+notR T = F
+notR F = T
+notR X = X
 
 implements, consistentWith :: ([Term] -> Range) -> Predicate -> Bool
 f `implements` p =
@@ -157,7 +164,7 @@ data Body
   = Case Int Body Body
   | And [RHS]
 
-data RHS = App Program [Arg] | Rec [Arg] | Bot
+data RHS = Not RHS | App Program [Arg] | Rec [Arg] | Bot
 
 data Arg = Arg Int | ConsA Int Int Type deriving Eq
 
@@ -215,6 +222,7 @@ showHead n vs ps = return (n ++ "(" ++ intercalate "," (map show (aux vs ps)) ++
         aux (v:w:vs) (ConsP ty:ps) = Cons (Var v) (Var w) ty:aux vs ps
 
 showRHS :: String -> [String] -> RHS -> ShowM String
+showRHS n vs (Not prog) = fmap ('~':) (showRHS n vs prog)
 showRHS n vs (App prog ts) = do
   ShowState (n':ns) ps <- get
   put (ShowState ns (ps ++ [(n', prog)]))
@@ -246,9 +254,10 @@ guessBase rec p = refine candidates []
     refine _ cs
       | interpretBody (interpret rec) (And cs) `implements` p = cs
     refine [] cs =
-      refine (App (guess_ (filterP (relevant p') p'))
-              (map Arg (filter (relevant p') [0..arity p-1])):cs) []
-      where p' = p `except` interpretBody (interpret rec) (And cs)
+      refine (Not
+              (App (guess_ (filterP (relevant p') p'))
+               (map Arg (filter (relevant p') [0..arity p-1]))):cs) []
+      where p' = notP (p `except` interpretBody (interpret rec) (And cs))
     refine (c:cs) cs'
       | interpretRHS (interpret rec) c `redundantIn` interpretBody (interpret rec) (And cs') =
           refine cs cs'
@@ -313,6 +322,8 @@ interpretProg (Program _ body) = x
 
 interpretRHS :: ([Term] -> Range) -> RHS -> [Term] -> Range
 interpretRHS p Bot _ = F
+interpretRHS p (Not prog) ts =
+  notR (interpretRHS p prog ts)
 interpretRHS p (App prog vs) ts =
   interpretProg prog [ interpretArg ts v | v <- vs ]
 interpretRHS p (Rec vs) ts =
