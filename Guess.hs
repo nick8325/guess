@@ -8,16 +8,89 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 module Main where
 
-import Prelude hiding (pred)
+import Prelude hiding (elem)
 import Control.Monad
-import Data.Maybe
-import Data.List
-import Data.Ord
-import Control.Monad.State
-import Control.Monad.Writer
-import Data.Function
-import Control.Spoon
+-- import Prelude hiding (pred)
+-- import Control.Monad
+-- import Data.Maybe
+-- import Data.List
+-- import Data.Ord
+-- import Control.Monad.State
+-- import Control.Monad.Writer
+-- import Data.Function
+-- import Control.Spoon
 
+-- Lisp terms.
+data Term = Nil Type | Cons Type Term Term | Var Type String
+  deriving (Eq, Ord)
+
+data Type = Unit | Int | List Type deriving (Eq, Ord)
+
+termType :: Term -> Type
+termType (Nil ty) = ty
+termType (Cons ty _ _) = ty
+termType (Var ty _) = ty
+
+instance Show Term where
+  showsPrec _ (Nil Unit) = showString "()"
+  showsPrec _ (Nil Int) = showString "0"
+  showsPrec _ (Nil (List _)) = showString "[]"
+  showsPrec n (Cons Int x y) =
+    showParen (n > 10) (showsPrec 11 y . showString "+1")
+  showsPrec n (Cons (List _) x y) =
+    showParen (n > 10) (showsPrec 11 x . showString ":" . showsPrec 0 y)
+  showsPrec n (Cons Unit x y) =
+    error "show: Cons _ _ :: Unit"
+  showsPrec n (Var _ x) = showString x
+
+-- Sets of test data.
+
+data Set = Set {
+  setType :: Type,
+  nilElem :: Bool,
+  consElem :: Maybe (Set, Set)
+  }
+
+nilSet :: Type -> Set
+nilSet ty = Set ty True Nothing
+
+table :: Set -> [Term]
+table s =
+  [ Nil (setType s) | nilElem s ] ++
+  case consElem s of
+    Nothing -> []
+    Just (t, u) ->
+      liftM2 (Cons (setType s)) (table t) (table u)
+
+elem :: Term -> Set -> Bool
+Nil{} `elem` s = nilElem s
+Cons _ x y `elem` s =
+  case consElem s of
+    Nothing -> False
+    Just (s, t) -> x `elem` s && y `elem` t
+
+listOf :: Set -> Type -> Int -> Set
+listOf x ty 0 = nilSet ty
+listOf x ty n = Set ty True (Just (x, listOf x ty (n-1)))
+
+class Lisp a where
+  fromTerm :: Term -> a
+  sample :: a -> Set
+
+instance Lisp Int where
+  fromTerm (Nil Int) = 0
+  fromTerm (Cons Int (Nil Unit) x) = succ (fromTerm x)
+
+  sample _ = listOf (nilSet Unit) Int 3
+
+instance Lisp a => Lisp [a] where
+  fromTerm (Nil _) = []
+  fromTerm (Cons _ x xs) = fromTerm x:fromTerm xs
+
+  sample xs = listOf sx (List (setType sx)) 3
+    where sx = sample (head xs)
+
+{-
 data Term = Nil Type | Cons Term Term Type | Var String deriving (Eq, Ord)
 data Type = Unit | Int | List Type deriving (Eq, Ord)
 
@@ -26,44 +99,6 @@ uncons Int = (Unit, Int)
 uncons Unit = error "uncons: Unit"
 uncons (List x) = (x, List x)
 
-instance Show Term where
-  showsPrec _ (Nil Unit) = showString "()"
-  showsPrec _ (Nil Int) = showString "0"
-  showsPrec _ (Nil (List _)) = showString "[]"
-  showsPrec n (Cons x y Int) =
-    showParen (n > 10) (showsPrec 11 y . showString "+1")
-  showsPrec n (Cons x y (List _)) =
-    showParen (n > 10) (showsPrec 11 x . showString ":" . showsPrec 0 y)
-  showsPrec n (Cons x y Unit) =
-    error "show: Cons _ _ :: Unit"
-  showsPrec n (Var x) = showString x
-
-class Lisp a where
-  term :: a -> Term
-  back :: Term -> a
-
-  lispType :: a -> Type
-  sample :: [a]
-
-instance Lisp Int where
-  term 0 = Nil Int
-  term n = Cons (Nil Unit) (term (n-1)) Int
-
-  back (Nil Int) = 0
-  back (Cons (Nil Unit) x Int) = succ (back x)
-
-  lispType _ = Int
-  sample = [0..3]
-
-instance Lisp a => Lisp [a] where
-  term xs@[] = Nil (lispType xs)
-  term (x:xs) = Cons (term x) (term xs) (lispType xs)
-
-  back (Nil _) = []
-  back (Cons x xs _) = back x:back xs
-
-  lispType xs = List (lispType (head xs))
-  sample = concat [ sequence (replicate i sample) | i <- [0..4] ]
 
 data Predicate = Predicate {
   predType :: [Type],
@@ -426,3 +461,5 @@ predicate2 :: Eq c => (a -> b -> c) -> (a -> b -> c -> Bool)
 predicate2 f = curry (predicate (uncurry f))
 
 main = print (guess ((<=) :: [Int] -> [Int] -> Bool))
+-}
+main = undefined
