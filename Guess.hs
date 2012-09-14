@@ -240,16 +240,16 @@ showArg vs (ConsA x y t) = show (Cons (Var (vs !! x)) (Var (vs !! y)) t)
 showArg vs (Arg x) = vs !! x
 
 guess_ :: Predicate -> Program
-guess_ p = Program (predType p) (aux 0 p)
+guess_ p = Program (predType p) (aux 0 0 p)
   where
-    aux n p'
-      | n >= arity p' = And (guessBase p p')
-      | irrelevant p' n = aux (n+1) p'
-      | otherwise = Case n (aux n (nil n p'))
-                           (aux (n+2) (cons n p'))
+    aux n m p'
+      | n >= arity p' = And (guessBase m p p')
+      | irrelevant p' n = aux (n+1) m p'
+      | otherwise = Case n (aux n m (nil n p'))
+                           (aux (n+2) (m+1) (cons n p'))
 
-guessBase :: Predicate -> Predicate -> [RHS]
-guessBase rec p = refine candidates []
+guessBase :: Int -> Predicate -> Predicate -> [RHS]
+guessBase constrs rec p = refine candidates []
   where
     refine _ cs
       | interpretBody (interpret rec) (And cs) `implements` p = cs
@@ -273,14 +273,14 @@ guessBase rec p = refine candidates []
 
     candidates =
       Bot:
-      map Rec (sortBy (comparing (length . map argVars)) tss)
+      map Rec (sortBy (comparing (length . map argConstrs)) tss)
       where
         tss =
           [ ts
           | vs <- permutations (zip [0..] (predType p)),
             ts <- map head . group . map (take (arity rec)) . collect $ vs,
             [ argType (predType p) t | t <- ts ] == predType rec,
-            sum (map argVars ts) < arity p,
+            sum (map argConstrs ts) < constrs,
             arity rec > 0 ]
 
     collect [] = return []
@@ -295,8 +295,8 @@ guessBase rec p = refine candidates []
     argType ts (Arg x) = ts !! x
     argType ts (ConsA _ _ t) = t
 
-    argVars Arg{} = 1
-    argVars ConsA{} = 2
+    argConstrs Arg{} = 0
+    argConstrs ConsA{} = 1
 
 relevant p i = not (irrelevant p i)
 irrelevant p i =
