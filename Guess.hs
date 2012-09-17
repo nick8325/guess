@@ -15,6 +15,7 @@ import Data.Maybe
 import Data.Function
 import Data.Ord
 import Control.Spoon
+import Debug.Trace
 
 -- Lisp terms.
 data Term = Nil Type | Cons Type Term Term | Var Type Int
@@ -105,6 +106,7 @@ listOf x ty n = InsertNil ty (ConsS ty x (listOf x ty (n-1)))
 
 -- Patterns.
 data Pattern = Pattern {
+  trivial :: Bool,
   bound :: [Type],
   match :: Set -> Maybe [Set],
   undo :: [Term] -> Term
@@ -117,6 +119,7 @@ instance Show Pattern where
 
 idP :: Type -> Pattern
 idP ty = Pattern {
+  trivial = True,
   bound = [ty],
   match = \s -> Just [s],
   undo = \[t] -> t
@@ -124,6 +127,7 @@ idP ty = Pattern {
 
 nilP :: Type -> Pattern
 nilP ty = Pattern {
+  trivial = False,
   bound = [],
   match = \s -> if Nil ty `elem` s then Just [] else Nothing,
   undo = \[] -> Nil ty
@@ -131,6 +135,7 @@ nilP ty = Pattern {
 
 consP :: Type -> Pattern
 consP ty = Pattern {
+  trivial = False,
   bound = [hd, tl],
   match =
      let match Empty{} = Nothing
@@ -149,6 +154,10 @@ patterns ty =
   case invert ty of
     Nothing -> []
     Just (l, r) -> [nilP ty, consP ty]
+
+patternsOrder :: [Pattern] -> Int
+patternsOrder = count (not . trivial)
+  where count p = length . filter p
 
 boundPatts :: [Pattern] -> [Type]
 boundPatts = concatMap bound
@@ -202,8 +211,15 @@ instance Show Clause where
       clauses = [clause]
       }
 
+clauseOrder (Clause pattern rhs) =
+  (patternsOrder pattern, rhsOrder rhs)
+
 data RHS = Bot | App Target [Term] | Not RHS deriving Show
 data Target = Self | Call Program deriving Show
+
+rhsOrder Bot = 0
+rhsOrder (Not r) = 1+rhsOrder r
+rhsOrder App{} = 2
 
 type ShowM = StateT ShowState (Writer String)
 data ShowState = ShowState {
@@ -312,7 +328,7 @@ negate pred = pred { func = not . func pred }
 
 -- Guessing.
 guess_ :: Int -> Predicate -> Program
-guess_ depth pred = Program args (refine pred [] cands)
+guess_ depth pred = traceShow (depth, args) $ Program args (refine pred [] cands)
   where
     args = predType pred
     cands = map const (candidates1 args) ++
@@ -335,7 +351,7 @@ refine pred cs (f:fs)
     cs' = evaluateClauses (func pred) cs . undoPatts patts
 
 candidates1 :: [Type] -> [Clause]
-candidates1 args = do
+candidates1 args = sortBy (comparing clauseOrder) $ do
   patts <- mapM patterns args
   rhs <- Bot:
          map (App Self) (descending args patts)
@@ -359,7 +375,7 @@ candidates2 0 _ = []
 candidates2 depth pred = do
   d <- [0..depth-1]
   pol <- [True, False]
-  patts <- mapM patterns (predType pred)
+  patts <- sortBy (comparing patternsOrder) $ mapM patterns (predType pred)
   return (synthesise d pol patts pred)
 
 synthesise :: Int -> Bool -> [Pattern] -> Predicate -> [Clause] -> Clause
@@ -450,7 +466,7 @@ guess x =
   let prog = guess_ 10 (pred x)
   in if evaluate prog `implements` pred x
      then shrink (pred x) prog
-     else prog -- error "guess failed"
+     else error "guess failed"
 
 -- Examples.
 sorted :: [Int] -> Bool
