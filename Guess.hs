@@ -509,6 +509,9 @@ lastDrop n xs =
     Nothing -> False
     Just x -> x
 
+leq :: [Int] -> [Int] -> Bool
+leq = (<=)
+
 predicate :: Eq b => (a -> b) -> (a -> b -> Bool)
 predicate f x y = f x == y
 
