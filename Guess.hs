@@ -15,7 +15,6 @@ import Data.Maybe
 import Data.Function
 import Data.Ord
 import Control.Spoon
-import Debug.Trace
 
 -- Lisp terms.
 data Term = Nil Type | Cons Type Term Term | Var Type Int
@@ -334,7 +333,7 @@ negate pred = pred { func = not . func pred }
 
 -- Guessing.
 guess_ :: Int -> Predicate -> Program
-guess_ depth pred = traceShow (depth, args) $ Program args (refine pred [] cands)
+guess_ depth pred = Program args (refine pred [] cands)
   where
     args = predType pred
     cands = map const (candidates1 args) ++
