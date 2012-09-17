@@ -43,36 +43,6 @@ instance Show Term where
     error "show: Cons _ _ :: Unit"
   showsPrec n (Var _ x) = showString x
 
--- Sets of test data.
-
-data Set = Set {
-  setType :: Type,
-  nilElem :: Bool,
-  consElem :: Maybe (Set, Set)
-  }
-
-nilSet :: Type -> Set
-nilSet ty = Set ty True Nothing
-
-table :: Set -> [Term]
-table s =
-  [ Nil (setType s) | nilElem s ] ++
-  case consElem s of
-    Nothing -> []
-    Just (t, u) ->
-      liftM2 (Cons (setType s)) (table t) (table u)
-
-elem :: Term -> Set -> Bool
-Nil{} `elem` s = nilElem s
-Cons _ x y `elem` s =
-  case consElem s of
-    Nothing -> False
-    Just (s, t) -> x `elem` s && y `elem` t
-
-listOf :: Set -> Type -> Int -> Set
-listOf x ty 0 = nilSet ty
-listOf x ty n = Set ty True (Just (x, listOf x ty (n-1)))
-
 class Lisp a where
   fromTerm :: Term -> a
   sample :: a -> Set
@@ -81,7 +51,7 @@ instance Lisp Int where
   fromTerm (Nil Int) = 0
   fromTerm (Cons Int (Nil Unit) x) = succ (fromTerm x)
 
-  sample _ = listOf (nilSet Unit) Int 3
+  sample _ = listOf (nil Unit) Int 3
 
 instance Lisp a => Lisp [a] where
   fromTerm (Nil _) = []
@@ -90,31 +60,99 @@ instance Lisp a => Lisp [a] where
   sample xs = listOf sx (List (setType sx)) 3
     where sx = sample (head xs)
 
-{-
-data Term = Nil Type | Cons Term Term Type | Var String deriving (Eq, Ord)
-data Type = Unit | Int | List Type deriving (Eq, Ord)
+-- Sets of test data.
+data Set
+  = Empty Type
+  | InsertNil Type Set
+  | ConsS Type Set Set
 
-uncons :: Type -> (Type, Type)
-uncons Int = (Unit, Int)
-uncons Unit = error "uncons: Unit"
-uncons (List x) = (x, List x)
+setType :: Set -> Type
+setType (Empty ty) = ty
+setType (InsertNil _ s) = setType s
+setType (ConsS ty _ _) = ty
 
+table :: Set -> [Term]
+table Empty{} = []
+table (InsertNil ty s) = Nil ty:table s
+table (ConsS ty s t) = liftM2 (Cons ty) (table s) (table t)
 
-data Predicate = Predicate {
-  predType :: [Type],
-  tests :: [[Term]],
-  interpret :: [Term] -> Range
+elem :: Term -> Set -> Bool
+Nil{} `elem` InsertNil{} = True
+t `elem` InsertNil _ s = t `elem` s
+Cons _ x y `elem` ConsS _ s t = x `elem` s && y `elem` t
+_ `elem` _ = False
+
+nil :: Type -> Set
+nil ty = InsertNil ty (Empty ty)
+
+listOf :: Set -> Type -> Int -> Set
+listOf x ty 0 = nil ty
+listOf x ty n = InsertNil ty (ConsS ty x (listOf x ty (n-1)))
+
+-- Patterns.
+data Pattern = Pattern {
+  arity :: Int,
+  match :: Set -> Maybe [Set],
+  apply :: [Term] -> Term
   }
 
-arity :: Predicate -> Int
-arity = length . predType
+nilP, consP :: Type -> Pattern
 
-instance Show Predicate where
-  show p =
-    unlines $
-      ["{"] ++
-      [ intercalate ", " (map show ts) ++ " -> " ++ show (interpret p ts) | ts <- tests p, interpret p ts /= X ] ++
-      ["}"]
+nilP ty = Pattern {
+  arity = 0,
+  match =
+     \s ->
+     if Nil ty `elem` s
+     then Just []
+     else Nothing,
+  apply = \[] -> Nil ty
+  }
+
+consP ty = Pattern {
+  arity = 2,
+  match =
+     let match Empty{} = Nothing
+         match (InsertNil _ s) = match s
+         match (ConsS _ s t) = Just [s, t]
+     in match,
+  apply = \[t, u] -> Cons ty t u
+  }
+
+matchPatts :: [Pattern] -> [Set] -> Maybe [Set]
+matchPatts ps ss = fmap concat (zipWithM match ps ss)
+
+applyPatts :: [Pattern] -> [Term] -> [Term]
+applyPatts [] [] = []
+applyPatts (p:ps) ts = apply p us:applyPatts ps vs
+  where (us, vs) = splitAt (arity p) ts
+
+-- Predicates.
+data Predicate = Predicate {
+  args :: [Set],
+  specified :: [Term] -> Bool,
+  func :: [Term] -> Bool
+  }
+
+matchPred :: [Pattern] -> Predicate -> Maybe Predicate
+matchPred patts pred = do
+  args <- matchPatts patts (args pred)
+  return Predicate {
+    args = args,
+    specified = specified pred . applyPatts patts,
+    func = func pred . applyPatts patts
+    }
+
+-- f(P(xs)) = g(xs)
+--   want: xs -> P(xs) for showing the pattern
+--         P(S) -> S for generating test data
+--         ts -> P(ts) for interpreting g
+
+-- matchPred :: Pattern -> Predicate -> Predicate
+-- matchPred patt pred = Predicate {
+--   args = match (args pred),
+--   specified
+
+{-
 
 nil :: Int -> Predicate -> Predicate
 nil n p = Predicate {
