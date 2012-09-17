@@ -162,11 +162,8 @@ patternsOrder = count (not . trivial)
 boundPatts :: [Pattern] -> [Type]
 boundPatts = concatMap bound
 
-matchPatts :: [Pattern] -> [Set] -> [Set]
-matchPatts ps ss =
-  case fmap concat (zipWithM match ps ss) of
-    Nothing -> map Empty (boundPatts ps)
-    Just x -> x
+matchPatts :: [Pattern] -> [Set] -> Maybe [Set]
+matchPatts ps ss = fmap concat (zipWithM match ps ss)
 
 undoPatts :: [Pattern] -> [Term] -> [Term]
 undoPatts [] [] = []
@@ -187,11 +184,20 @@ tests :: Predicate -> [[Term]]
 tests pred = [ ts | ts <- mapM table (domain pred), specified pred ts ]
 
 matchPred :: [Pattern] -> Predicate -> Predicate
-matchPred patts pred = Predicate {
-  domain = matchPatts patts (domain pred),
-  specified = specified pred . undoPatts patts,
-  func = func pred . undoPatts patts
-  }
+matchPred patts pred =
+  case matchPatts patts (domain pred) of
+    Just domain ->
+      Predicate {
+        domain = domain,
+        specified = specified pred . undoPatts patts,
+        func = func pred . undoPatts patts
+        }
+    Nothing ->
+      Predicate {
+        domain = map Empty (predType pred),
+        specified = const False,
+        func = const True
+        }
 
 -- Programs.
 data Program = Program {
@@ -293,7 +299,7 @@ evaluateClauses p cs ts =
 evaluateClause :: ([Term] -> Bool) -> Clause -> [Term] -> Bool
 evaluateClause p (Clause patts rhs) ts =
   and [ evaluateRHS p rhs us
-      | let ss = matchPatts patts (map singleton ts),
+      | Just ss <- [matchPatts patts (map singleton ts)],
         us <- mapM table ss ]
 
 evaluateRHS :: ([Term] -> Bool) -> RHS -> [Term] -> Bool
