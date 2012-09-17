@@ -12,8 +12,9 @@ import Control.Monad.State
 import Control.Monad.Writer
 import Data.List hiding (elem)
 import Data.Maybe
+import Data.Function
+import Data.Ord
 import Control.Spoon
-import Debug.Trace
 
 -- Lisp terms.
 data Term = Nil Type | Cons Type Term Term | Var Type Int
@@ -105,21 +106,26 @@ listOf x ty n = InsertNil ty (ConsS ty x (listOf x ty (n-1)))
 -- Patterns.
 data Pattern = Pattern {
   bound :: [Type],
-  match :: Set -> [Set],
+  match :: Set -> Maybe [Set],
   undo :: [Term] -> Term
   }
+
+instance Show Pattern where
+  show patt =
+    show (bound patt) ++ ":" ++
+    show (undo patt (zipWith Var (bound patt) [0..]))
 
 idP :: Type -> Pattern
 idP ty = Pattern {
   bound = [ty],
-  match = \s -> [s],
+  match = \s -> Just [s],
   undo = \[t] -> t
   }
 
 nilP :: Type -> Pattern
 nilP ty = Pattern {
   bound = [],
-  match = const [],
+  match = \s -> if Nil ty `elem` s then Just [] else Nothing,
   undo = \[] -> Nil ty
   }
 
@@ -127,9 +133,9 @@ consP :: Type -> Pattern
 consP ty = Pattern {
   bound = [hd, tl],
   match =
-     let match Empty{} = [Empty hd, Empty tl]
+     let match Empty{} = Nothing
          match (InsertNil _ s) = match s
-         match (ConsS _ s t) = [s, t]
+         match (ConsS _ s t) = Just [s, t]
      in match,
   undo = \[t, u] -> Cons ty t u
   }
@@ -137,6 +143,7 @@ consP ty = Pattern {
     Just (hd, tl) = invert ty
 
 patterns :: Type -> [Pattern]
+patterns Unit = [nilP Unit]
 patterns ty =
   idP ty:
   case invert ty of
@@ -147,7 +154,10 @@ boundPatts :: [Pattern] -> [Type]
 boundPatts = concatMap bound
 
 matchPatts :: [Pattern] -> [Set] -> [Set]
-matchPatts ps ss = concat (zipWith match ps ss)
+matchPatts ps ss =
+  case fmap concat (zipWithM match ps ss) of
+    Nothing -> map Empty (boundPatts ps)
+    Just x -> x
 
 undoPatts :: [Pattern] -> [Term] -> [Term]
 undoPatts [] [] = []
@@ -185,8 +195,15 @@ data Clause = Clause {
   rhs :: RHS
   }
 
-data RHS = Bot | App Target [Term] | Not RHS
-data Target = Self | Call Program
+instance Show Clause where
+  show clause =
+    show Program {
+      args = [],
+      clauses = [clause]
+      }
+
+data RHS = Bot | App Target [Term] | Not RHS deriving Show
+data Target = Self | Call Program deriving Show
 
 type ShowM = StateT ShowState (Writer String)
 data ShowState = ShowState {
@@ -295,7 +312,7 @@ negate pred = pred { func = not . func pred }
 
 -- Guessing.
 guess_ :: Int -> Predicate -> Program
-guess_ depth pred = traceShow (length cands, args) $ Program args (refine pred [] cands)
+guess_ depth pred = Program args (refine pred [] cands)
   where
     args = predType pred
     cands = map const (candidates1 args) ++
@@ -306,15 +323,16 @@ refine pred cs cs'
   | evaluate (Program (predType pred) cs) `implements` pred = cs
 refine pred cs [] = cs
 refine pred cs (f:fs)
-  | evalC `consistentWith` pred &&
-    extends (evaluateRHS (func pred) rhs)
-            (evaluateClauses (func pred) cs)
-            (matchPred patts pred) =
+  | not (cs' `implements` pred') &&
+    rhs' `consistentWith` pred' &&
+    extends rhs' cs' pred' =
       refine pred (c:cs) fs
   | otherwise = refine pred cs fs
   where
-    evalC = evaluateClause (func pred) c
     c@(Clause patts rhs) = f cs
+    pred' = matchPred patts pred
+    rhs' = evaluateRHS (func pred) rhs
+    cs' = evaluateClauses (func pred) cs . undoPatts patts
 
 candidates1 :: [Type] -> [Clause]
 candidates1 args = do
@@ -328,6 +346,7 @@ descending args patts
   | length ctx <= length args = []
   | otherwise =
     filter wellTyped .
+    filter (all ((/= Unit) . termType)) .
     map uniq . map (take (length args)) . permutations $
     zipWith Var ctx [0..]
   where
@@ -341,22 +360,66 @@ candidates2 depth pred = do
   d <- [0..depth-1]
   pol <- [True, False]
   patts <- mapM patterns (predType pred)
-  traceShow (d, pol) $ return (synthesise d pol patts pred)
+  return (synthesise d pol patts pred)
 
 synthesise :: Int -> Bool -> [Pattern] -> Predicate -> [Clause] -> Clause
 synthesise depth pol patts pred cs =
-  Clause patts (polarise Not (App (Call prog) (zipWith Var (boundPatts patts) [0..])))
+  Clause patts
+    (polarise Not
+     (App (Call prog)
+      (filter (relevant pred' . varId) vars)))
   where
     pred' =
       matchPred patts
         (polarise negate
-         (pred `except` evaluateClauses (func pred) cs))
+          (pred `except` evaluateClauses (func pred) cs))
     polarise f = if pol then id else f
-    prog = guess_ depth pred'
+    prog = guess_ depth (matchPred rels pred')
+    varId (Var _ i) = i
+    vars = zipWith Var (boundPatts patts) [0..]
+    rels = [
+        if relevant pred' i then idP ty else nilP ty
+      | Var ty i <- vars ]
+
+relevant p i = not (irrelevant p i)
+irrelevant p i =
+  all equal . groupBy ((==) `on` shell) .
+              sortBy (comparing shell) . tests $ p
+  where
+    shell ts = take i ts ++ drop (i+1) ts
+    equal tss = and (zipWith (==) xs (tail xs))
+      where xs = map (func p) tss
 
 -- Shrinking.
 shrink :: Predicate -> Program -> Program
-shrink _ = id
+shrink pred prog =
+  case [ prog'
+       | prog' <- candidates prog,
+         evaluate prog' `implements` pred ] of
+    [] -> prog
+    (prog':_) -> shrink pred prog'
+
+candidates :: Program -> [Program]
+candidates (Program args cs) =
+  map (Program args) (candidateClausess cs)
+
+candidateClausess :: [Clause] -> [[Clause]]
+candidateClausess [] = []
+candidateClausess (c:cs) =
+  cs:
+  map (:cs) (candidateClauses c) ++
+  map (c:) (candidateClausess cs)
+
+candidateClauses :: Clause -> [Clause]
+candidateClauses (Clause patt rhs) =
+  map (Clause patt) (candidateRHSs rhs)
+
+candidateRHSs :: RHS -> [RHS]
+candidateRHSs Bot = []
+candidateRHSs (Not r) = Bot:map Not (candidateRHSs r)
+candidateRHSs (App Self ts) = [Bot]
+candidateRHSs (App (Call prog) ts) =
+  Bot:[ App (Call prog') ts | prog' <- candidates prog ]
 
 -- A nicer interface.
 class Pred a where
@@ -383,7 +446,11 @@ pred x = Predicate {
   }
 
 guess :: Pred a => a -> Program
-guess x = shrink (pred x) (guess_ 10 (pred x))
+guess x =
+  let prog = guess_ 10 (pred x)
+  in if evaluate prog `implements` pred x
+     then shrink (pred x) prog
+     else prog -- error "guess failed"
 
 -- Examples.
 sorted :: [Int] -> Bool
@@ -424,92 +491,3 @@ predicate2 :: Eq c => (a -> b -> c) -> (a -> b -> c -> Bool)
 predicate2 f = curry (predicate (uncurry f))
 
 main = print (guess sorted)
-
-{-
-guessBase :: Int -> Int -> Predicate -> Predicate -> [RHS]
-guessBase depth constrs rec p = refine depth candidates []
-  where
-    refine _ _ cs
-      | interpretBody (interpret rec) (And cs) `implements` p = cs
-    refine 0 [] cs = cs
-    refine d [] cs = refine 0 synthed cs
-      where p' = p `except` interpretBody (interpret rec) (And cs)
-            g d p' =
-              App (guess_ d (filterP (relevant p') p'))
-                (map Arg (filter (relevant p') [0..arity p-1]))
-            synthed = concat [
-              [ g i p', Not (g i (notP p')) ]
-              | i <- [0..depth-1] ]
-    refine d (c:cs) cs'
-      | interpretRHS (interpret rec) c `redundantIn` interpretBody (interpret rec) (And cs') =
-          refine d cs cs'
-      | interpretRHS (interpret rec) c `consistentWith` p =
-          refine d cs (c:cs')
-      | otherwise = refine d cs cs'
-
-    redundantIn prog prog' =
-      and [ subsumed (interpret p ts) (prog ts) (prog' ts) | ts <- tests p ]
-      where subsumed F F T = False
-            subsumed F F X = False
-            subsumed _ _ _ = True
-
-    candidates =
-      Bot:
-      map Rec (sortBy (comparing (sum . map argConstrs)) tss)
-      where
-        tss =
-          [ ts
-          | vs <- permutations (zip [0..] (predType p)),
-            ts <- map head . group . map (take (arity rec)) . collect $ vs,
-            [ argType (predType p) t | t <- ts ] == predType rec,
-            sum (map argConstrs ts) < constrs,
-            arity rec > 0 ]
-
-    collect [] = return []
-    collect ((t,ty):ts) = pair ts `mplus` fmap (Arg t:) (collect ts)
-      where
-        pair ((u,Int):ts)
-          | ty == Unit = fmap (ConsA t u Int:) (collect ts)
-        pair ((u,ty'):ts)
-          | ty' == List ty = fmap (ConsA t u ty':) (collect ts)
-        pair _ = mzero
-
-    argType ts (Arg x) = ts !! x
-    argType ts (ConsA _ _ t) = t
-
-    argConstrs Arg{} = 0
-    argConstrs ConsA{} = 1
-
-relevant p i = not (irrelevant p i)
-irrelevant p i =
-  all equal . groupBy ((==) `on` shell) .
-              sortBy (comparing shell) . tests $ p
-  where
-    shell ts = take i ts ++ drop (i+1) ts
-    equal tss = and (zipWith (==) xs (tail xs))
-      where xs = filter (/= X) (map (interpret p) tss)
-
-shrink :: Predicate -> Program -> Program
-shrink pred p =
-  case [ p' | p' <- candidates p, interpretProg p' `implements` pred ] of
-    [] -> p
-    (p':_) -> shrink pred p'
-
-candidates (Program ts x) = map (Program ts) (candidatesBody x)
-
-candidatesBody (Case n l r) =
-  [ Case n l' r | l' <- candidatesBody l ] ++
-  [ Case n l r' | r' <- candidatesBody r ]
-candidatesBody (And rs) = map And (candidatesRHSs rs)
-
-candidatesRHSs [] = []
-candidatesRHSs (r:rs) =
-  rs:
-  map (:rs) (candidatesRHS r) ++
-  map (r:) (candidatesRHSs rs)
-
-candidatesRHS Bot = []
-candidatesRHS (App prog ts) =
-  Bot:[ App prog' ts | prog' <- candidates prog ]
-candidatesRHS _ = [Bot]
--}
