@@ -377,25 +377,25 @@ candidates2 depth pred = do
   pol <- [True, False]
   patts <- sortBy (comparing patternsOrder) $ mapM patterns (predType pred)
   guard (not (all trivial patts))
-  return (synthesise d pol patts pred)
+  let polarise f = if pol then id else f
+  return
+    (\cs ->
+      Clause patts
+       (polarise Not
+        (synthesise d
+         (matchPred patts
+          (polarise negate
+           (pred `except` evaluateClauses (func pred) cs))))))
 
-synthesise :: Int -> Bool -> [Pattern] -> Predicate -> [Clause] -> Clause
-synthesise depth pol patts pred cs =
-  Clause patts
-    (polarise Not
-     (App (Call prog)
-      (filter (relevant pred' . varId) vars)))
+synthesise :: Int -> Predicate -> RHS
+synthesise depth pred =
+  App (Call prog) (filter (relevant pred . varId) vars)
   where
-    pred' =
-      matchPred patts
-        (polarise negate
-          (pred `except` evaluateClauses (func pred) cs))
-    polarise f = if pol then id else f
-    prog = guess_ depth (matchPred rels pred')
+    prog = guess_ depth (matchPred rels pred)
     varId (Var _ i) = i
-    vars = zipWith Var (boundPatts patts) [0..]
+    vars = zipWith Var (predType pred) [0..]
     rels = [
-        if relevant pred' i then idP ty else nilP ty
+        if relevant pred i then idP ty else nilP ty
       | Var ty i <- vars ]
 
 relevant p i = not (irrelevant p i)
