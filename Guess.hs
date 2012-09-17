@@ -282,9 +282,6 @@ f `implements` pred = and [ f ts == func pred ts | ts <- tests pred ]
 f `consistentWith` pred =
   and [ not (func pred ts) || f ts | ts <- tests pred ]
 
-extends :: ([Term] -> Bool) -> ([Term] -> Bool) -> Predicate -> Bool
-extends f g pred = or [ not (f ts) && g ts | ts <- tests pred ]
-
 except :: Predicate -> ([Term] -> Bool) -> Predicate
 except pred f = Predicate {
   domain = domain pred,
@@ -306,8 +303,7 @@ refine pred cs cs'
 refine pred cs [] = cs
 refine pred cs (f:fs) = case f cs of
   Just c
-    | evalC `consistentWith` pred &&
-      extends evalC (evaluateClauses (func pred) cs) pred ->
+    | evalC `consistentWith` pred ->
       refine pred (c:cs) fs
     where evalC = evaluateClause (func pred) c
   _ -> refine pred cs fs
