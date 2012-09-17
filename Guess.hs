@@ -319,13 +319,6 @@ candidates1 args = do
          map (App Self .) (descending args patts)
   return (Clause patts rhs)
 
-promote :: [Type] -> ([Term] -> [[Term]]) -> [[Term] -> [Term]]
-promote args f = map (abstract . map varId) (f specimen)
-  where
-    abstract ns = \us -> [ us !! n | n <- ns ]
-    specimen = zipWith3 Var args [0..] (repeat "*")
-    varId (Var _ n _) = n
-
 descending :: [Type] -> [Pattern] -> [[Term] -> [Term]]
 descending args patts
   | length ctx <= length args = []
