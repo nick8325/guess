@@ -254,13 +254,21 @@ evaluateRHS p (Not r) = not (evaluateRHS p r)
 evaluateRHS p (App Self ts) = p ts
 evaluateRHS _ (App (Call p) ts) = evaluate p ts
 
--- Satisfaction.
+-- Predicate operators.
 implements, consistentWith :: ([Term] -> Bool) -> Predicate -> Bool
-implements = undefined
-consistentWith = undefined
+f `implements` pred = and [ f ts == func pred ts | ts <- tests pred ]
+f `consistentWith` pred =
+  and [ not (func pred ts) || f ts | ts <- tests pred ]
 
 extends :: ([Term] -> Bool) -> ([Term] -> Bool) -> Predicate -> Bool
-extends = undefined
+extends f g pred = or [ not (f ts) && g ts | ts <- tests pred ]
+
+except :: Predicate -> ([Term] -> Bool) -> Predicate
+except pred f = Predicate {
+  domain = domain pred,
+  specified = \ts -> specified pred ts && f ts,
+  func = func pred
+  }
 
 -- Guessing.
 guess_ :: Int -> Predicate -> Program
