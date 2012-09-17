@@ -146,6 +146,12 @@ data Predicate = Predicate {
   func :: [Term] -> Bool
   }
 
+predType :: Predicate -> [Type]
+predType = map setType . domain
+
+tests :: Predicate -> [[Term]]
+tests pred = [ ts | ts <- mapM table (domain pred), specified pred ts ]
+
 matchPred :: [Pattern] -> Predicate -> Maybe Predicate
 matchPred patts pred = do
   domain <- matchPatts patts (domain pred)
@@ -230,28 +236,61 @@ showArgs ts = "(" ++ intercalate "," (map show ts) ++ ")"
 
 -- Evaluation.
 evaluate :: Program -> [Term] -> Bool
-evaluate p@(Program _ cs) ts =
+evaluate p@(Program _ cs) ts = evaluateClauses (evaluate p) cs ts
+
+evaluateClauses :: ([Term] -> Bool) -> [Clause] -> [Term] -> Bool
+evaluateClauses p cs ts =
   and [ evaluateClause p c ts | c <- cs ]
 
-evaluateClause :: Program -> Clause -> [Term] -> Bool
+evaluateClause :: ([Term] -> Bool) -> Clause -> [Term] -> Bool
 evaluateClause p (Clause patts rhs) ts =
   and [ evaluateRHS p (rhs us)
       | Just ss <- [matchPatts patts (map singleton ts)],
         us <- mapM table ss ]
 
-evaluateRHS :: Program -> RHS -> Bool
+evaluateRHS :: ([Term] -> Bool) -> RHS -> Bool
 evaluateRHS _ Bot = False
 evaluateRHS p (Not r) = not (evaluateRHS p r)
-evaluateRHS p (App Self ts) = evaluate p ts
+evaluateRHS p (App Self ts) = p ts
 evaluateRHS _ (App (Call p) ts) = evaluate p ts
+
+-- Satisfaction.
+implements, consistentWith :: ([Term] -> Bool) -> Predicate -> Bool
+implements = undefined
+consistentWith = undefined
+
+extends :: ([Term] -> Bool) -> ([Term] -> Bool) -> Predicate -> Bool
+extends = undefined
 
 -- Guessing.
 guess_ :: Int -> Predicate -> Program
-guess_ = undefined
+guess_ depth pred = Program args (refine pred [] cands)
+  where
+    args = predType pred
+    cands = map (const . Just) (candidates1 args) ++
+            candidates2 depth pred
+
+refine :: Predicate -> [Clause] -> [[Clause] -> Maybe Clause] -> [Clause]
+refine pred cs cs'
+  | evaluate (Program (predType pred) cs) `implements` pred = cs
+refine pred cs [] = cs
+refine pred cs (f:fs) = case f cs of
+  Just c
+    | evalC `consistentWith` pred &&
+      extends evalC (evaluateClauses (func pred) cs) pred ->
+      refine pred (c:cs) fs
+    where evalC = evaluateClause (func pred) c
+  _ -> refine pred cs fs
+
+candidates1 :: [Type] -> [Clause]
+candidates1 = undefined
+
+candidates2 :: Int -> Predicate -> [[Clause] -> Maybe Clause]
+candidates2 = undefined
 
 -- Shrinking.
 shrink :: Predicate -> Program -> Program
-shrink = undefined
+shrink _ = id
 
 -- A nicer interface.
 class Pred a where
@@ -383,31 +422,6 @@ irrelevant p i =
     shell ts = take i ts ++ drop (i+1) ts
     equal tss = and (zipWith (==) xs (tail xs))
       where xs = filter (/= X) (map (interpret p) tss)
-
-interpretBody :: ([Term] -> Range) -> Body -> [Term] -> Range
-interpretBody rec (And rhss) ts =
-  foldr andR T [ interpretRHS rec rhs ts | rhs <- rhss ]
-interpretBody rec (Case i n c) ts =
-  case ts !! i of
-    Nil _ -> interpretBody rec n (take i ts ++ drop (i+1) ts)
-    Cons x xs _ ->
-      interpretBody rec c (take i ts ++ [x, xs] ++ drop (i+1) ts)
-
-interpretProg :: Program -> [Term] -> Range
-interpretProg (Program _ body) = x
-  where x = interpretBody x body
-
-interpretRHS :: ([Term] -> Range) -> RHS -> [Term] -> Range
-interpretRHS p Bot _ = F
-interpretRHS p (Not prog) ts =
-  notR (interpretRHS p prog ts)
-interpretRHS p (App prog vs) ts =
-  interpretProg prog [ interpretArg ts v | v <- vs ]
-interpretRHS p (Rec vs) ts =
-  p [ interpretArg ts v | v <- vs ]
-
-interpretArg ts (Arg v) = ts !! v
-interpretArg ts (ConsA x y t) = Cons (ts !! x) (ts !! y) t
 
 shrink :: Predicate -> Program -> Program
 shrink pred p =
