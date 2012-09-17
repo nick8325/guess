@@ -182,7 +182,7 @@ data Program = Program {
 
 data Clause = Clause {
   pattern :: [Pattern],
-  rhs :: [Term] -> RHS
+  rhs :: RHS
   }
 
 data RHS = Bot | App Target [Term] | Not RHS
@@ -224,7 +224,7 @@ showProgram name (Program args cs) = do
 showClause :: String -> Clause -> ShowM ()
 showClause name (Clause patts rhs) = do
   tell $ name ++ showArgs (undoPatts patts vs) ++ " -> "
-  showRHS name (rhs vs)
+  showRHS name rhs
   tell "\n"
   where
     vs = zipWith Var (concatMap bound patts) [0..]
@@ -259,15 +259,20 @@ evaluateClauses p cs ts =
 
 evaluateClause :: ([Term] -> Bool) -> Clause -> [Term] -> Bool
 evaluateClause p (Clause patts rhs) ts =
-  and [ evaluateRHS p (rhs us)
+  and [ evaluateRHS p rhs us
       | let ss = matchPatts patts (map singleton ts),
         us <- mapM table ss ]
 
-evaluateRHS :: ([Term] -> Bool) -> RHS -> Bool
-evaluateRHS _ Bot = False
-evaluateRHS p (Not r) = not (evaluateRHS p r)
-evaluateRHS p (App Self ts) = p ts
-evaluateRHS _ (App (Call p) ts) = evaluate p ts
+evaluateRHS :: ([Term] -> Bool) -> RHS -> [Term] -> Bool
+evaluateRHS _ Bot _ = False
+evaluateRHS p (Not r) ts = not (evaluateRHS p r ts)
+evaluateRHS p (App Self ts) us = p (map (subst us) ts)
+evaluateRHS _ (App (Call p) ts) us = evaluate p (map (subst us) ts)
+
+subst :: [Term] -> Term -> Term
+subst ts (Var _ i) = ts !! i
+subst ts (Cons ty t u) = Cons ty (subst ts t) (subst ts u)
+subst ts n@Nil{} = n
 
 -- Predicate operators.
 implements, consistentWith :: ([Term] -> Bool) -> Predicate -> Bool
@@ -302,7 +307,7 @@ refine pred cs cs'
 refine pred cs [] = cs
 refine pred cs (f:fs)
   | evalC `consistentWith` pred &&
-    extends (evaluateRHS (func pred) . rhs)
+    extends (evaluateRHS (func pred) rhs)
             (evaluateClauses (func pred) cs)
             (matchPred patts pred) =
       refine pred (c:cs) fs
@@ -314,22 +319,20 @@ refine pred cs (f:fs)
 candidates1 :: [Type] -> [Clause]
 candidates1 args = do
   patts <- mapM patterns args
-  rhs <- const Bot:
-         map (App Self .) (descending args patts)
+  rhs <- Bot:
+         map (App Self) (descending args patts)
   return (Clause patts rhs)
 
-descending :: [Type] -> [Pattern] -> [[Term] -> [Term]]
+descending :: [Type] -> [Pattern] -> [[Term]]
 descending args patts
   | length ctx <= length args = []
   | otherwise =
-    map permute . filter wellTyped .
+    filter wellTyped .
     map uniq . map (take (length args)) . permutations $
-    [0..length ctx-1]
+    zipWith Var ctx [0..]
   where
     ctx = boundPatts patts
-    permute is ts = [ ts !! i | i <- is ]
-    wellTyped is =
-      and (zipWith (==) args [ ctx !! i | i <- is ])
+    wellTyped ts = and (zipWith (==) args (map termType ts))
     uniq = map head . group
 
 candidates2 :: Int -> Predicate -> [[Clause] -> Clause]
@@ -342,7 +345,7 @@ candidates2 depth pred = do
 
 synthesise :: Int -> Bool -> [Pattern] -> Predicate -> [Clause] -> Clause
 synthesise depth pol patts pred cs =
-  Clause patts (polarise Not . App (Call prog))
+  Clause patts (polarise Not (App (Call prog) (zipWith Var (boundPatts patts) [0..])))
   where
     pred' =
       matchPred patts
