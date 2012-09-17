@@ -10,6 +10,9 @@ module Main where
 
 import Prelude hiding (elem)
 import Control.Monad
+import Control.Monad.State
+import Control.Monad.Writer
+import Data.List hiding (elem)
 -- import Prelude hiding (pred)
 -- import Control.Monad
 -- import Data.Maybe
@@ -24,7 +27,17 @@ import Control.Monad
 data Term = Nil Type | Cons Type Term Term | Var Type String
   deriving (Eq, Ord)
 
-data Type = Unit | Int | List Type deriving (Eq, Ord)
+data Type = Unit | Nat | List Type deriving (Eq, Ord)
+
+invert :: Type -> Maybe (Type, Type)
+invert Unit = Nothing
+invert Nat = Just (Unit, Nat)
+invert (List ty) = Just (ty, List ty)
+
+instance Show Type where
+  show Unit = "()"
+  show Nat = "Nat"
+  show (List ty) = "[" ++ show ty ++ "]"
 
 termType :: Term -> Type
 termType (Nil ty) = ty
@@ -33,9 +46,9 @@ termType (Var ty _) = ty
 
 instance Show Term where
   showsPrec _ (Nil Unit) = showString "()"
-  showsPrec _ (Nil Int) = showString "0"
+  showsPrec _ (Nil Nat) = showString "0"
   showsPrec _ (Nil (List _)) = showString "[]"
-  showsPrec n (Cons Int x y) =
+  showsPrec n (Cons Nat x y) =
     showParen (n > 10) (showsPrec 11 y . showString "+1")
   showsPrec n (Cons (List _) x y) =
     showParen (n > 10) (showsPrec 11 x . showString ":" . showsPrec 0 y)
@@ -48,10 +61,10 @@ class Lisp a where
   sample :: a -> Set
 
 instance Lisp Int where
-  fromTerm (Nil Int) = 0
-  fromTerm (Cons Int (Nil Unit) x) = succ (fromTerm x)
+  fromTerm (Nil Nat) = 0
+  fromTerm (Cons Nat (Nil Unit) x) = succ (fromTerm x)
 
-  sample _ = listOf (nil Unit) Int 3
+  sample _ = listOf (nil Unit) Nat 3
 
 instance Lisp a => Lisp [a] where
   fromTerm (Nil _) = []
@@ -91,25 +104,28 @@ listOf x ty n = InsertNil ty (ConsS ty x (listOf x ty (n-1)))
 
 -- Patterns.
 data Pattern = Pattern {
-  arity :: Int,
+  bound :: [Type],
   match :: Set -> Maybe [Set],
   apply :: [Term] -> Term
   }
 
-nilP, consP :: Type -> Pattern
+nilP :: Type -> Pattern
+nilP ty = constP (Nil ty)
 
-nilP ty = Pattern {
-  arity = 0,
+constP :: Term -> Pattern
+constP t = Pattern {
+  bound = [],
   match =
      \s ->
-     if Nil ty `elem` s
+     if t `elem` s
      then Just []
      else Nothing,
-  apply = \[] -> Nil ty
+  apply = \[] -> t
   }
 
+consP :: Type -> Pattern
 consP ty = Pattern {
-  arity = 2,
+  bound = [hd, tl],
   match =
      let match Empty{} = Nothing
          match (InsertNil _ s) = match s
@@ -117,6 +133,8 @@ consP ty = Pattern {
      in match,
   apply = \[t, u] -> Cons ty t u
   }
+  where
+    Just (hd, tl) = invert ty
 
 matchPatts :: [Pattern] -> [Set] -> Maybe [Set]
 matchPatts ps ss = fmap concat (zipWithM match ps ss)
@@ -124,60 +142,98 @@ matchPatts ps ss = fmap concat (zipWithM match ps ss)
 applyPatts :: [Pattern] -> [Term] -> [Term]
 applyPatts [] [] = []
 applyPatts (p:ps) ts = apply p us:applyPatts ps vs
-  where (us, vs) = splitAt (arity p) ts
+  where (us, vs) = splitAt (length (bound p)) ts
 
 -- Predicates.
 data Predicate = Predicate {
-  args :: [Set],
+  domain :: [Set],
   specified :: [Term] -> Bool,
   func :: [Term] -> Bool
   }
 
 matchPred :: [Pattern] -> Predicate -> Maybe Predicate
 matchPred patts pred = do
-  args <- matchPatts patts (args pred)
+  domain <- matchPatts patts (domain pred)
   return Predicate {
-    args = args,
+    domain = domain,
     specified = specified pred . applyPatts patts,
     func = func pred . applyPatts patts
     }
 
--- f(P(xs)) = g(xs)
---   want: xs -> P(xs) for showing the pattern
---         P(S) -> S for generating test data
---         ts -> P(ts) for interpreting g
+-- Programs.
+data Program = Program {
+  args :: [Type],
+  clauses :: [Clause]
+  }
 
--- matchPred :: Pattern -> Predicate -> Predicate
--- matchPred patt pred = Predicate {
---   args = match (args pred),
---   specified
+data Clause = Clause {
+  pattern :: [Pattern],
+  rhs :: [Term] -> RHS
+  }
+
+data RHS = Bot | App Target [Term] | Not RHS
+data Target = Self | Call Program
+
+type ShowM = StateT ShowState (Writer String)
+data ShowState = ShowState {
+  names :: [String],
+  queue :: [(String, Program)]
+  }
+
+preds, vars :: [String]
+preds = infinite ['p','q','r','s']
+vars = infinite $ ['x','y','z','w','t','u','v']
+infinite xs = concat [ replicateM n xs | n <- [1..] ]
+
+instance Show Program where
+  show p =
+    execWriter (execStateT (loop showProgram) (ShowState (tail preds) [(head preds, p)]))
+
+loop :: (String -> Program -> ShowM ()) -> ShowM ()
+loop f = do
+  ShowState ns q <- get
+  case q of
+    [] -> return ()
+    ((n,p):ps) -> do
+      put (ShowState ns ps)
+      f n p
+      loop f
+
+showProgram :: String -> Program -> ShowM ()
+showProgram name (Program args cs) = do
+  tell (concat [ show ty ++ " -> " | ty <- args ] ++ "Bool")
+  mapM_ (showClause name) cs
+  tell "\n"
+
+showClause :: String -> Clause -> ShowM ()
+showClause name (Clause patts rhs) = do
+  tell $ name ++ showArgs (applyPatts patts vs) ++ " -> "
+  showRHS name (rhs vs)
+  tell "\n"
+  where
+    vs = zipWith Var (concatMap bound patts) vars
+
+showRHS :: String -> RHS -> ShowM ()
+showRHS _ Bot = tell "False"
+showRHS name (Not x) = do
+  tell "~"
+  showRHS name x
+showRHS name (App f ts) = do
+  showTarget name f
+  tell (showArgs ts)
+
+showTarget :: String -> Target -> ShowM ()
+showTarget name Self = tell name
+showTarget _ (Call prog) = do
+  ShowState (name:names) progs <- get
+  put (ShowState names (progs ++ [(name, prog)]))
+  tell name
+
+showArgs :: [Term] -> String
+showArgs [] = ""
+showArgs ts = "(" ++ intercalate "," (map show ts) ++ ")"
 
 {-
-
-nil :: Int -> Predicate -> Predicate
-nil n p = Predicate {
-  predType = take n (predType p) ++ drop (n+1) (predType p),
-  tests = [ take n ts ++ drop (n+1) ts
-          | ts <- tests p,
-            Nil _ <- [ts !! n] ],
-  interpret = \ts -> interpret p $
-                     take n ts ++ [Nil xt] ++ drop n ts
-  }
-  where xt = predType p !! n
-
-cons :: Int -> Predicate -> Predicate
-cons n p = Predicate {
-  predType =
-     let (x, y) = uncons (predType p !! n)
-     in take n (predType p) ++ [x, y] ++ drop (n+1) (predType p),
-  tests = [ take n ts ++ [x,y] ++ drop (n+1) ts
-          | ts <- tests p,
-            Cons x y _ <- [ts !! n] ],
-  interpret = \ts -> interpret p $
-                      take n ts ++ [Cons (ts !! n) (ts !! (n+1)) xt] ++
-                      drop (n+2) ts
-  }
-  where xt = predType p !! n
 
 notP :: Predicate -> Predicate
 notP p = p { interpret = notR . interpret p }
@@ -241,78 +297,6 @@ data Body
 data RHS = Not RHS | App Program [Arg] | Rec [Arg] | Bot
 
 data Arg = Arg Int | ConsA Int Int Type deriving Eq
-
-type ShowM = StateT ShowState (Writer String)
-data ShowState = ShowState {
-  names :: [String],
-  queue :: [(String, Bool, Program)]
-  }
-
-instance Show Program where
-  show p =
-    execWriter (execStateT showProgram (ShowState (tail preds) [(head preds, True, p)]))
-
-showProgram :: ShowM ()
-showProgram = do
-  ShowState ns q <- get
-  case q of
-    [] -> return ()
-    ((n,pol,Program ty p):ps) -> do
-      put (ShowState ns ps)
-      showBody pol n (map VarP ty) p >>= (tell . (++ "\n\n"))
-      showProgram
-
-preds, vars :: [String]
-preds = infinite ['p','q','r','s']
-vars = infinite $ ['x','y','z','w','t','u','v']
-infinite xs = concat [ replicateM n xs | n <- [1..] ]
-
-data Pattern = NilP Type | ConsP Type | VarP Type
-
-splice :: (Type -> Pattern) -> Int -> [Pattern] -> [Pattern]
-splice p n (NilP ty:ps) = NilP ty:splice p n ps
-splice p n (ConsP ty:ps) | n >= 2 = ConsP ty:splice p (n-2) ps
-splice p 0 (VarP ty:ps) = p ty:ps
-splice p n (VarP ty:ps) = VarP ty:splice p (n-1) ps
-
-showBody :: Bool -> String -> [Pattern] -> Body -> ShowM String
-showBody pol n ctx (And []) =
-  liftM2 (++) (showHead n vars ctx) (return $ " = " ++ if pol then "True" else "False")
-showBody pol n ctx (And rhss) = do
-  head <- showHead n vars ctx
-  xs <- mapM (showRHS pol n vars) rhss
-  return (head ++ " = " ++ intercalate (if pol then " && " else " || ") xs)
-showBody pol n ctx (Case v nil cons) = do
-  nil' <- showBody pol n (splice NilP v ctx) nil
-  cons' <- showBody pol n (splice ConsP v ctx) cons
-  return (nil' ++ "\n" ++ cons')
-
-showHead :: String -> [String] -> [Pattern] -> ShowM String
-showHead n _ [] = return n
-showHead n vs ps = return (n ++ "(" ++ intercalate "," (map show (aux vs ps)) ++ ")")
-  where aux vs [] = []
-        aux vs (NilP ty:ps) = Nil ty:aux vs ps
-        aux (v:vs) (VarP ty:ps) = Var v:aux vs ps
-        aux (v:w:vs) (ConsP ty:ps) = Cons (Var v) (Var w) ty:aux vs ps
-
-showRHS :: Bool -> String -> [String] -> RHS -> ShowM String
-showRHS pol n vs (Not prog) = showRHS (not pol) n vs prog
-showRHS pol n vs (App prog ts) = do
-  ShowState (n':ns) ps <- get
-  put (ShowState ns (ps ++ [(n', pol, prog)]))
-  case ts of
-    [] -> return n'
-    _ -> return (n' ++ "(" ++ intercalate "," [ showArg vs t | t <- ts ] ++ ")")
-showRHS pol n vs (Rec ts) =
-  case ts of
-    [] -> return n
-    _ -> return (n ++ "(" ++ intercalate "," [ showArg vs t | t <- ts ] ++ ")")
-showRHS pol n vs Bot = return (if pol then "False" else "True")
-
-showArg :: [String] -> Arg -> String
-showArg vs (ConsA x y t) = show (Cons (Var (vs !! x)) (Var (vs !! y)) t)
-showArg vs (Arg x) = vs !! x
-
 guess_ :: Int -> Predicate -> Program
 guess_ d p = Program (predType p) (aux 0 0 p)
   where
