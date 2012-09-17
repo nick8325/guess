@@ -16,7 +16,7 @@ import Control.Spoon
 import Debug.Trace
 
 -- Lisp terms.
-data Term = Nil Type | Cons Type Term Term | Var Type Int String
+data Term = Nil Type | Cons Type Term Term | Var Type Int
   deriving (Eq, Ord)
 
 data Type = Unit | Nat | List Type deriving (Eq, Ord)
@@ -34,7 +34,7 @@ instance Show Type where
 termType :: Term -> Type
 termType (Nil ty) = ty
 termType (Cons ty _ _) = ty
-termType (Var ty _ _) = ty
+termType (Var ty _) = ty
 
 instance Show Term where
   showsPrec _ (Nil Unit) = showString "()"
@@ -46,7 +46,10 @@ instance Show Term where
     showParen (n > 10) (showsPrec 11 x . showString ":" . showsPrec 0 y)
   showsPrec n (Cons Unit x y) =
     error "show: Cons _ _ :: Unit"
-  showsPrec n (Var _ _ x) = showString x
+  showsPrec n (Var ty i) = showString (twiddle ty (vars !! i))
+    where
+      twiddle (List ty) x = twiddle ty (x ++ "s")
+      twiddle _ x = x
 
 class Lisp a where
   fromTerm :: Term -> a
@@ -102,40 +105,33 @@ listOf x ty n = InsertNil ty (ConsS ty x (listOf x ty (n-1)))
 -- Patterns.
 data Pattern = Pattern {
   bound :: [Type],
-  match :: Set -> Maybe [Set],
-  apply :: [Term] -> Term
+  match :: Set -> [Set],
+  undo :: [Term] -> Term
   }
 
 idP :: Type -> Pattern
 idP ty = Pattern {
   bound = [ty],
-  match = \s -> Just [s],
-  apply = \[t] -> t
+  match = \s -> [s],
+  undo = \[t] -> t
   }
 
 nilP :: Type -> Pattern
-nilP ty = constP (Nil ty)
-
-constP :: Term -> Pattern
-constP t = Pattern {
+nilP ty = Pattern {
   bound = [],
-  match =
-     \s ->
-     if t `elem` s
-     then Just []
-     else Nothing,
-  apply = \[] -> t
+  match = const [],
+  undo = \[] -> Nil ty
   }
 
 consP :: Type -> Pattern
 consP ty = Pattern {
   bound = [hd, tl],
   match =
-     let match Empty{} = Nothing
+     let match Empty{} = [Empty hd, Empty tl]
          match (InsertNil _ s) = match s
-         match (ConsS _ s t) = Just [s, t]
+         match (ConsS _ s t) = [s, t]
      in match,
-  apply = \[t, u] -> Cons ty t u
+  undo = \[t, u] -> Cons ty t u
   }
   where
     Just (hd, tl) = invert ty
@@ -151,13 +147,11 @@ boundPatts :: [Pattern] -> [Type]
 boundPatts = concatMap bound
 
 matchPatts :: [Pattern] -> [Set] -> [Set]
-matchPatts ps ss =
-  fromMaybe (map Empty (boundPatts ps))
-    (fmap concat (zipWithM match ps ss))
+matchPatts ps ss = concat (zipWith match ps ss)
 
-applyPatts :: [Pattern] -> [Term] -> [Term]
-applyPatts [] [] = []
-applyPatts (p:ps) ts = apply p us:applyPatts ps vs
+undoPatts :: [Pattern] -> [Term] -> [Term]
+undoPatts [] [] = []
+undoPatts (p:ps) ts = undo p us:undoPatts ps vs
   where (us, vs) = splitAt (length (bound p)) ts
 
 -- Predicates.
@@ -176,8 +170,8 @@ tests pred = [ ts | ts <- mapM table (domain pred), specified pred ts ]
 matchPred :: [Pattern] -> Predicate -> Predicate
 matchPred patts pred = Predicate {
   domain = matchPatts patts (domain pred),
-  specified = specified pred . applyPatts patts,
-  func = func pred . applyPatts patts
+  specified = specified pred . undoPatts patts,
+  func = func pred . undoPatts patts
   }
 
 -- Programs.
@@ -229,14 +223,11 @@ showProgram name (Program args cs) = do
 
 showClause :: String -> Clause -> ShowM ()
 showClause name (Clause patts rhs) = do
-  tell $ name ++ showArgs (applyPatts patts vs) ++ " -> "
+  tell $ name ++ showArgs (undoPatts patts vs) ++ " -> "
   showRHS name (rhs vs)
   tell "\n"
   where
-    vs = zipWith3 f (concatMap bound patts) [0..] vars
-    f ty n name = Var ty n (twiddle ty name)
-    twiddle (List ty) name = twiddle ty (name ++ "s")
-    twiddle _ name = name
+    vs = zipWith Var (concatMap bound patts) [0..]
 
 showRHS :: String -> RHS -> ShowM ()
 showRHS _ Bot = tell "False"
