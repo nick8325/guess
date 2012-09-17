@@ -376,6 +376,7 @@ candidates2 depth pred = do
   d <- [0..depth-1]
   pol <- [True, False]
   patts <- sortBy (comparing patternsOrder) $ mapM patterns (predType pred)
+  guard (not (all trivial patts))
   return (synthesise d pol patts pred)
 
 synthesise :: Int -> Bool -> [Pattern] -> Predicate -> [Clause] -> Clause
