@@ -6,12 +6,14 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 module Main where
 
-import Prelude hiding (elem, pred)
+import Prelude hiding (elem, pred, negate)
 import Control.Monad
 import Control.Monad.State
 import Control.Monad.Writer
 import Data.List hiding (elem)
+import Data.Maybe
 import Control.Spoon
+import Debug.Trace
 
 -- Lisp terms.
 data Term = Nil Type | Cons Type Term Term | Var Type Int String
@@ -148,8 +150,10 @@ patterns ty =
 boundPatts :: [Pattern] -> [Type]
 boundPatts = concatMap bound
 
-matchPatts :: [Pattern] -> [Set] -> Maybe [Set]
-matchPatts ps ss = fmap concat (zipWithM match ps ss)
+matchPatts :: [Pattern] -> [Set] -> [Set]
+matchPatts ps ss =
+  fromMaybe (map Empty (boundPatts ps))
+    (fmap concat (zipWithM match ps ss))
 
 applyPatts :: [Pattern] -> [Term] -> [Term]
 applyPatts [] [] = []
@@ -169,14 +173,12 @@ predType = map setType . domain
 tests :: Predicate -> [[Term]]
 tests pred = [ ts | ts <- mapM table (domain pred), specified pred ts ]
 
-matchPred :: [Pattern] -> Predicate -> Maybe Predicate
-matchPred patts pred = do
-  domain <- matchPatts patts (domain pred)
-  return Predicate {
-    domain = domain,
-    specified = specified pred . applyPatts patts,
-    func = func pred . applyPatts patts
-    }
+matchPred :: [Pattern] -> Predicate -> Predicate
+matchPred patts pred = Predicate {
+  domain = matchPatts patts (domain pred),
+  specified = specified pred . applyPatts patts,
+  func = func pred . applyPatts patts
+  }
 
 -- Programs.
 data Program = Program {
@@ -267,7 +269,7 @@ evaluateClauses p cs ts =
 evaluateClause :: ([Term] -> Bool) -> Clause -> [Term] -> Bool
 evaluateClause p (Clause patts rhs) ts =
   and [ evaluateRHS p (rhs us)
-      | Just ss <- [matchPatts patts (map singleton ts)],
+      | let ss = matchPatts patts (map singleton ts),
         us <- mapM table ss ]
 
 evaluateRHS :: ([Term] -> Bool) -> RHS -> Bool
@@ -282,6 +284,9 @@ f `implements` pred = and [ f ts == func pred ts | ts <- tests pred ]
 f `consistentWith` pred =
   and [ not (func pred ts) || f ts | ts <- tests pred ]
 
+extends :: ([Term] -> Bool) -> ([Term] -> Bool) -> Predicate -> Bool
+extends f g pred = or [ not (f ts) && g ts | ts <- tests pred ]
+
 except :: Predicate -> ([Term] -> Bool) -> Predicate
 except pred f = Predicate {
   domain = domain pred,
@@ -289,24 +294,31 @@ except pred f = Predicate {
   func = func pred
   }
 
+negate :: Predicate -> Predicate
+negate pred = pred { func = not . func pred }
+
 -- Guessing.
 guess_ :: Int -> Predicate -> Program
-guess_ depth pred = Program args (refine pred [] cands)
+guess_ depth pred = traceShow (length cands, args) $ Program args (refine pred [] cands)
   where
     args = predType pred
-    cands = map (const . Just) (candidates1 args) ++
+    cands = map const (candidates1 args) ++
             candidates2 depth pred
 
-refine :: Predicate -> [Clause] -> [[Clause] -> Maybe Clause] -> [Clause]
+refine :: Predicate -> [Clause] -> [[Clause] -> Clause] -> [Clause]
 refine pred cs cs'
   | evaluate (Program (predType pred) cs) `implements` pred = cs
 refine pred cs [] = cs
-refine pred cs (f:fs) = case f cs of
-  Just c
-    | evalC `consistentWith` pred ->
+refine pred cs (f:fs)
+  | evalC `consistentWith` pred &&
+    extends (evaluateRHS (func pred) . rhs)
+            (evaluateClauses (func pred) cs)
+            (matchPred patts pred) =
       refine pred (c:cs) fs
-    where evalC = evaluateClause (func pred) c
-  _ -> refine pred cs fs
+  | otherwise = refine pred cs fs
+  where
+    evalC = evaluateClause (func pred) c
+    c@(Clause patts rhs) = f cs
 
 candidates1 :: [Type] -> [Clause]
 candidates1 args = do
@@ -329,8 +341,24 @@ descending args patts
       and (zipWith (==) args [ ctx !! i | i <- is ])
     uniq = map head . group
 
-candidates2 :: Int -> Predicate -> [[Clause] -> Maybe Clause]
-candidates2 _ _ = []
+candidates2 :: Int -> Predicate -> [[Clause] -> Clause]
+candidates2 0 _ = []
+candidates2 depth pred = do
+  d <- [0..depth-1]
+  pol <- [True, False]
+  patts <- mapM patterns (predType pred)
+  traceShow (d, pol) $ return (synthesise d pol patts pred)
+
+synthesise :: Int -> Bool -> [Pattern] -> Predicate -> [Clause] -> Clause
+synthesise depth pol patts pred cs =
+  Clause patts (polarise Not . App (Call prog))
+  where
+    pred' =
+      matchPred patts
+        (polarise negate
+         (pred `except` evaluateClauses (func pred) cs))
+    polarise f = if pol then id else f
+    prog = guess_ depth pred'
 
 -- Shrinking.
 shrink :: Predicate -> Program -> Program
@@ -401,7 +429,7 @@ predicate f x y = f x == y
 predicate2 :: Eq c => (a -> b -> c) -> (a -> b -> c -> Bool)
 predicate2 f = curry (predicate (uncurry f))
 
-main = print (guess ((<=) :: Int -> Int -> Bool))
+main = print (guess sorted)
 
 {-
 guessBase :: Int -> Int -> Predicate -> Predicate -> [RHS]
