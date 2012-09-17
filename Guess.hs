@@ -2,26 +2,16 @@
 -- When inventing a predicate p(x:y,z) -> q(x,y,z),
 -- see if we can split it into q(x,y) & r(y,z).
 -- Can check this by exhaustive testing.
---
--- Perhaps remove X and instead just remove the Xs from the domain.
 
 {-# LANGUAGE ScopedTypeVariables #-}
 module Main where
 
-import Prelude hiding (elem)
+import Prelude hiding (elem, pred)
 import Control.Monad
 import Control.Monad.State
 import Control.Monad.Writer
 import Data.List hiding (elem)
--- import Prelude hiding (pred)
--- import Control.Monad
--- import Data.Maybe
--- import Data.List
--- import Data.Ord
--- import Control.Monad.State
--- import Control.Monad.Writer
--- import Data.Function
--- import Control.Spoon
+import Control.Spoon
 
 -- Lisp terms.
 data Term = Nil Type | Cons Type Term Term | Var Type String
@@ -233,6 +223,81 @@ showArgs :: [Term] -> String
 showArgs [] = ""
 showArgs ts = "(" ++ intercalate "," (map show ts) ++ ")"
 
+-- Guessing.
+guess_ :: Int -> Predicate -> Program
+guess_ = undefined
+
+-- Shrinking.
+shrink :: Predicate -> Program -> Program
+shrink = undefined
+
+-- A nicer interface.
+class Pred a where
+  domain_ :: a -> [Set]
+  specified_ :: a -> [Term] -> Bool
+  func_ :: a -> [Term] -> Bool
+
+instance Pred Bool where
+  domain_ _ = []
+  specified_ _ [] = True
+  func_ x [] = x
+
+instance (Lisp a, Pred b) => Pred (a -> b) where
+  domain_ f = sample x:domain_ (f x)
+    where x = undefined :: a
+  specified_ f (x:xs) = specified_ (f (fromTerm x)) xs
+  func_ f (x:xs) = func_ (f (fromTerm x)) xs
+
+pred :: Pred a => a -> Predicate
+pred x = Predicate {
+  domain = domain_ x,
+  specified = specified_ x,
+  func = func_ x
+  }
+
+guess :: Pred a => a -> Program
+guess x = shrink (pred x) (guess_ 10 (pred x))
+
+-- Examples.
+sorted :: [Int] -> Bool
+sorted xs = xs == sort xs
+
+sortPred :: [Int] -> [Int] -> Bool
+sortPred xs ys = ys == sort xs
+
+allLeq :: Int -> [Int] -> Bool
+allLeq x xs = all (x <=) xs
+
+append :: [Int] -> [Int] -> [Int] -> Bool
+append = predicate2 (++)
+
+zipRev :: [Int] -> [Int] -> Bool
+zipRev xs ys =
+  zipp (reverse xs) (reverse ys) =!=
+    reverse (zipp xs ys)
+  where
+    x =!= y =
+      case teaspoon (x == y) of
+        Nothing -> False
+        Just x -> x
+
+zipp [] [] = []
+zipp (x:xs) (y:ys) = (x,y):zipp xs ys
+
+lastDrop :: Int -> [Int] -> Bool
+lastDrop n xs =
+  case teaspoon (last (drop n xs) == last xs) of
+    Nothing -> False
+    Just x -> x
+
+predicate :: Eq b => (a -> b) -> (a -> b -> Bool)
+predicate f x y = f x == y
+
+predicate2 :: Eq c => (a -> b -> c) -> (a -> b -> c -> Bool)
+predicate2 f = curry (predicate (uncurry f))
+
+main = print (guess ((<=) :: [Int] -> [Int] -> Bool))
+
 {-
 
 notP :: Predicate -> Predicate
@@ -442,46 +507,4 @@ candidatesRHS (App prog ts) =
   Bot:[ App prog' ts | prog' <- candidates prog ]
 candidatesRHS _ = [Bot]
 
-guess :: Pred a => a -> Program
-guess x = shrink (pred x) (guess_ 10 (pred x))
-
-sorted :: [Int] -> Bool
-sorted xs = xs == sort xs
-
-sortPred :: [Int] -> [Int] -> Bool
-sortPred xs ys = ys == sort xs
-
-allLeq :: Int -> [Int] -> Bool
-allLeq x xs = all (x <=) xs
-
-append :: [Int] -> [Int] -> [Int] -> Bool
-append = predicate2 (++)
-
-zipRev :: [Int] -> [Int] -> Bool
-zipRev xs ys =
-  zipp (reverse xs) (reverse ys) =!=
-    reverse (zipp xs ys)
-  where
-    x =!= y =
-      case teaspoon (x == y) of
-        Nothing -> False
-        Just x -> x
-
-zipp [] [] = []
-zipp (x:xs) (y:ys) = (x,y):zipp xs ys
-
-lastDrop :: Int -> [Int] -> Bool
-lastDrop n xs =
-  case teaspoon (last (drop n xs) == last xs) of
-    Nothing -> False
-    Just x -> x
-
-predicate :: Eq b => (a -> b) -> (a -> b -> Bool)
-predicate f x y = f x == y
-
-predicate2 :: Eq c => (a -> b -> c) -> (a -> b -> c -> Bool)
-predicate2 f = curry (predicate (uncurry f))
-
-main = print (guess ((<=) :: [Int] -> [Int] -> Bool))
 -}
-main = undefined
