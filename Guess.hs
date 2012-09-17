@@ -481,6 +481,9 @@ sorted xs = xs == sort xs
 sortPred :: [Int] -> [Int] -> Bool
 sortPred xs ys = ys == sort xs
 
+anyLeq :: Int -> [Int] -> Bool
+anyLeq x xs = any (x <=) xs
+
 allLeq :: Int -> [Int] -> Bool
 allLeq x xs = all (x <=) xs
 
