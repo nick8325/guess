@@ -14,7 +14,7 @@ import Data.List hiding (elem)
 import Control.Spoon
 
 -- Lisp terms.
-data Term = Nil Type | Cons Type Term Term | Var Type String
+data Term = Nil Type | Cons Type Term Term | Var Type Int String
   deriving (Eq, Ord)
 
 data Type = Unit | Nat | List Type deriving (Eq, Ord)
@@ -32,7 +32,7 @@ instance Show Type where
 termType :: Term -> Type
 termType (Nil ty) = ty
 termType (Cons ty _ _) = ty
-termType (Var ty _) = ty
+termType (Var ty _ _) = ty
 
 instance Show Term where
   showsPrec _ (Nil Unit) = showString "()"
@@ -44,7 +44,7 @@ instance Show Term where
     showParen (n > 10) (showsPrec 11 x . showString ":" . showsPrec 0 y)
   showsPrec n (Cons Unit x y) =
     error "show: Cons _ _ :: Unit"
-  showsPrec n (Var _ x) = showString x
+  showsPrec n (Var _ _ x) = showString x
 
 class Lisp a where
   fromTerm :: Term -> a
@@ -104,6 +104,13 @@ data Pattern = Pattern {
   apply :: [Term] -> Term
   }
 
+idP :: Type -> Pattern
+idP ty = Pattern {
+  bound = [ty],
+  match = \s -> Just [s],
+  apply = \[t] -> t
+  }
+
 nilP :: Type -> Pattern
 nilP ty = constP (Nil ty)
 
@@ -130,6 +137,16 @@ consP ty = Pattern {
   }
   where
     Just (hd, tl) = invert ty
+
+patterns :: Type -> [Pattern]
+patterns ty =
+  idP ty:
+  case invert ty of
+    Nothing -> []
+    Just (l, r) -> [nilP ty, consP ty]
+
+boundPatts :: [Pattern] -> [Type]
+boundPatts = concatMap bound
 
 matchPatts :: [Pattern] -> [Set] -> Maybe [Set]
 matchPatts ps ss = fmap concat (zipWithM match ps ss)
@@ -202,7 +219,9 @@ loop f = do
 
 showProgram :: String -> Program -> ShowM ()
 showProgram name (Program args cs) = do
-  tell (concat [ show ty ++ " -> " | ty <- args ] ++ "Bool")
+  tell $
+    name ++ " :: " ++
+    concat [ show ty ++ " -> " | ty <- args ] ++ "Bool\n"
   mapM_ (showClause name) cs
   tell "\n"
 
@@ -212,7 +231,10 @@ showClause name (Clause patts rhs) = do
   showRHS name (rhs vs)
   tell "\n"
   where
-    vs = zipWith Var (concatMap bound patts) vars
+    vs = zipWith3 f (concatMap bound patts) [0..] vars
+    f ty n name = Var ty n (twiddle ty name)
+    twiddle (List ty) name = twiddle ty (name ++ "s")
+    twiddle _ name = name
 
 showRHS :: String -> RHS -> ShowM ()
 showRHS _ Bot = tell "False"
@@ -232,7 +254,7 @@ showTarget _ (Call prog) = do
 
 showArgs :: [Term] -> String
 showArgs [] = ""
-showArgs ts = "(" ++ intercalate "," (map show ts) ++ ")"
+showArgs ts = " (" ++ intercalate ", " (map show ts) ++ ")"
 
 -- Evaluation.
 evaluate :: Program -> [Term] -> Bool
@@ -291,10 +313,35 @@ refine pred cs (f:fs) = case f cs of
   _ -> refine pred cs fs
 
 candidates1 :: [Type] -> [Clause]
-candidates1 = undefined
+candidates1 args = do
+  patts <- mapM patterns args
+  rhs <- const Bot:
+         map (App Self .) (descending args patts)
+  return (Clause patts rhs)
+
+promote :: [Type] -> ([Term] -> [[Term]]) -> [[Term] -> [Term]]
+promote args f = map (abstract . map varId) (f specimen)
+  where
+    abstract ns = \us -> [ us !! n | n <- ns ]
+    specimen = zipWith3 Var args [0..] (repeat "*")
+    varId (Var _ n _) = n
+
+descending :: [Type] -> [Pattern] -> [[Term] -> [Term]]
+descending args patts
+  | length ctx <= length args = []
+  | otherwise =
+    map permute . filter wellTyped .
+    map uniq . map (take (length args)) . permutations $
+    [0..length ctx-1]
+  where
+    ctx = boundPatts patts
+    permute is ts = [ ts !! i | i <- is ]
+    wellTyped is =
+      and (zipWith (==) args [ ctx !! i | i <- is ])
+    uniq = map head . group
 
 candidates2 :: Int -> Predicate -> [[Clause] -> Maybe Clause]
-candidates2 = undefined
+candidates2 _ _ = []
 
 -- Shrinking.
 shrink :: Predicate -> Program -> Program
@@ -365,7 +412,7 @@ predicate f x y = f x == y
 predicate2 :: Eq c => (a -> b -> c) -> (a -> b -> c -> Bool)
 predicate2 f = curry (predicate (uncurry f))
 
-main = print (guess ((<=) :: [Int] -> [Int] -> Bool))
+main = print (guess ((<=) :: Int -> Int -> Bool))
 
 {-
 guessBase :: Int -> Int -> Predicate -> Predicate -> [RHS]
