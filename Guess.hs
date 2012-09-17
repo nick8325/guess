@@ -88,6 +88,11 @@ _ `elem` _ = False
 nil :: Type -> Set
 nil ty = InsertNil ty (Empty ty)
 
+singleton :: Term -> Set
+singleton (Nil ty) = nil ty
+singleton (Cons ty t u) = ConsS ty (singleton t) (singleton u)
+singleton Var{} = error "singleton: non-ground term"
+
 listOf :: Set -> Type -> Int -> Set
 listOf x ty 0 = nil ty
 listOf x ty n = InsertNil ty (ConsS ty x (listOf x ty (n-1)))
@@ -223,6 +228,23 @@ showArgs :: [Term] -> String
 showArgs [] = ""
 showArgs ts = "(" ++ intercalate "," (map show ts) ++ ")"
 
+-- Evaluation.
+evaluate :: Program -> [Term] -> Bool
+evaluate p@(Program _ cs) ts =
+  and [ evaluateClause p c ts | c <- cs ]
+
+evaluateClause :: Program -> Clause -> [Term] -> Bool
+evaluateClause p (Clause patts rhs) ts =
+  and [ evaluateRHS p (rhs us)
+      | Just ss <- [matchPatts patts (map singleton ts)],
+        us <- mapM table ss ]
+
+evaluateRHS :: Program -> RHS -> Bool
+evaluateRHS _ Bot = False
+evaluateRHS p (Not r) = not (evaluateRHS p r)
+evaluateRHS p (App Self ts) = evaluate p ts
+evaluateRHS _ (App (Call p) ts) = evaluate p ts
+
 -- Guessing.
 guess_ :: Int -> Predicate -> Program
 guess_ = undefined
@@ -299,78 +321,6 @@ predicate2 f = curry (predicate (uncurry f))
 main = print (guess ((<=) :: [Int] -> [Int] -> Bool))
 
 {-
-
-notP :: Predicate -> Predicate
-notP p = p { interpret = notR . interpret p }
-
-filterP :: (Int -> Bool) -> Predicate -> Predicate
-filterP rel p = Predicate {
-  predType = [ predType p !! i | i <- rels ],
-  tests = [ [ ts !! i | i <- rels ] | ts <- tests p ],
-  interpret = \ts -> interpret p $
-                      foldr update arb (zip rels ts)
-  }
-  where rel' x = x `elem` rels
-        rels = [ i | i <- [0..arity p-1], rel i ]
-        update (i, x) ts = take i ts ++ [x] ++ drop (i+1) ts
-        arb = head (tests p)
-
-data Range = F | X | T deriving (Eq, Show)
-
-F `andR` _ = F
-_ `andR` F = F
-T `andR` T = T
-_ `andR` _ = X
-
-notR T = F
-notR F = T
-notR X = X
-
-implements, consistentWith :: ([Term] -> Range) -> Predicate -> Bool
-f `implements` p =
-  and [ f ts `describes` interpret p ts | ts <- tests p ]
-  where
-    _ `describes` X = True
-    x `describes` y = x == y
-
-f `consistentWith` p =
-  and [ f ts `follows` interpret p ts | ts <- tests p ]
-  where
-    T `follows` _ = True
-    _ `follows` X = True
-    F `follows` F = True
-    _ `follows` _ = False
-
-except :: Predicate -> ([Term] -> Range) -> Predicate
-p `except` f = Predicate {
-  predType = predType p,
-  tests = tests p,
-  interpret = \ts -> interpret p ts `exceptR` f ts
-  }
-  where
-    F `exceptR` F = X
-    F `exceptR` _ = F
-    T `exceptR` _ = T
-    X `exceptR` _ = X
-
-data Program = Program [Type] Body
-
-data Body
-  = Case Int Body Body
-  | And [RHS]
-
-data RHS = Not RHS | App Program [Arg] | Rec [Arg] | Bot
-
-data Arg = Arg Int | ConsA Int Int Type deriving Eq
-guess_ :: Int -> Predicate -> Program
-guess_ d p = Program (predType p) (aux 0 0 p)
-  where
-    aux n m p'
-      | n >= arity p' = And (guessBase d m p p')
-      | irrelevant p' n = aux (n+1) m p'
-      | otherwise = Case n (aux n m (nil n p'))
-                           (aux (n+2) (m+1) (cons n p'))
-
 guessBase :: Int -> Int -> Predicate -> Predicate -> [RHS]
 guessBase depth constrs rec p = refine depth candidates []
   where
@@ -459,30 +409,6 @@ interpretRHS p (Rec vs) ts =
 interpretArg ts (Arg v) = ts !! v
 interpretArg ts (ConsA x y t) = Cons (ts !! x) (ts !! y) t
 
-class Pred a where
-  predType_ :: a -> [Type]
-  tests_ :: a -> [[Term]]
-  interpret_ :: a -> [Term] -> Range
-
-instance Pred Bool where
-  predType_ _ = []
-  tests_ _ = [[]]
-  interpret_ False [] = F
-  interpret_ True [] = T
-
-instance (Lisp a, Pred b) => Pred (a -> b) where
-  predType_ (f :: a -> b) = lispType (undefined :: a):predType_ (undefined :: b)
-  tests_ (f :: a -> b) = liftM2 (:) (map term (sample :: [a])) (tests_ (undefined :: b))
-  interpret_ f (x:xs) =
-    interpret_ (f (back x)) xs
-
-pred :: Pred a => a -> Predicate
-pred x = Predicate {
-  predType = predType_ x,
-  tests = tests_ x,
-  interpret = interpret_ x
-  }
-
 shrink :: Predicate -> Program -> Program
 shrink pred p =
   case [ p' | p' <- candidates p, interpretProg p' `implements` pred ] of
@@ -506,5 +432,4 @@ candidatesRHS Bot = []
 candidatesRHS (App prog ts) =
   Bot:[ App prog' ts | prog' <- candidates prog ]
 candidatesRHS _ = [Bot]
-
 -}
