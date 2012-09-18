@@ -2,6 +2,20 @@
 -- When inventing a predicate p(x:y,z) -> q(x,y,z),
 -- see if we can split it into q(x,y) & r(y,z).
 -- Can check this by exhaustive testing.
+--
+-- Allow variables to appear twice in patterns (equality).
+--
+-- Synthesise predicates using a subset of all available variables.
+--
+-- Allow conjunction w/ synthesised predicates e.g.
+--   mult(X+1,Y,Z) :- mult(X,Y,Q), add(Q,Y,Z)
+-- we can try mult(X,Y,Q) and use that to generate test data
+-- (for Q) to synthesise add.
+
+-- "Inverse entailment and Progol" gives:
+--   f(A, B) :- d(A, C), f(C, D), m(A, D, B)
+-- where f is factorial and d is predecessor.
+-- Look---pattern-matching is conjunction!
 
 {-# LANGUAGE ScopedTypeVariables #-}
 module Main where
@@ -511,6 +525,12 @@ lastDrop n xs =
 
 leq :: [Int] -> [Int] -> Bool
 leq = (<=)
+
+plus :: Int -> Int -> Int -> Bool
+plus = predicate2 (+)
+
+mult :: Int -> Int -> Int -> Bool
+mult = predicate2 (*)
 
 predicate :: Eq b => (a -> b) -> (a -> b -> Bool)
 predicate f x y = f x == y
