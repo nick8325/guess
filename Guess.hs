@@ -382,12 +382,12 @@ descending args patts
   | otherwise =
     filter wellTyped .
     filter (all ((/= Unit) . termType)) .
-    map uniq . map (take (length args)) . permutations $
+    uniq . map (take (length args)) . permutations $
     zipWith Var ctx [0..]
   where
     ctx = boundPatts patts
     wellTyped ts = and (zipWith (==) args (map termType ts))
-    uniq = map head . group
+    uniq = map head . group . sort
 
 candidates2 :: Int -> Predicate -> [[Clause] -> Clause]
 candidates2 0 _ = []
