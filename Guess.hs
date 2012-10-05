@@ -591,4 +591,5 @@ noconsec xs = map head (group xs) == xs
 rev :: [Int] -> Bool
 rev xs = reverse xs == xs
 
-main = print (guess nubbed)
+even :: Int -> Bool
+even x = x `mod` 2 == 0
