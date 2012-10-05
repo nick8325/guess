@@ -582,4 +582,10 @@ predicate f x y = f x == y
 predicate2 :: Eq c => (a -> b -> c) -> (a -> b -> c -> Bool)
 predicate2 f = curry (predicate (uncurry f))
 
-main = print (guess sorted)
+nubbed :: [Int] -> Bool
+nubbed xs = nub xs == xs
+
+noconsec :: [Int] -> Bool
+noconsec xs = map head (group xs) == xs
+
+main = print (guess nubbed)
