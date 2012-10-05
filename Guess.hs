@@ -588,4 +588,7 @@ nubbed xs = nub xs == xs
 noconsec :: [Int] -> Bool
 noconsec xs = map head (group xs) == xs
 
+rev :: [Int] -> Bool
+rev xs = reverse xs == xs
+
 main = print (guess nubbed)
