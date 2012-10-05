@@ -29,22 +29,27 @@ import Data.Maybe
 import Data.Function
 import Data.Ord
 import Control.Spoon
+import Debug.Trace
 
 -- Lisp terms.
 data Term = Nil Type | Cons Type Term Term | Var Type Int
   deriving (Eq, Ord)
 
-data Type = Unit | Nat | List Type deriving (Eq, Ord)
+data Type = Unit | Nat | List Type | Tree Type | Pair Type Type deriving (Eq, Ord)
 
 invert :: Type -> Maybe (Type, Type)
 invert Unit = Nothing
 invert Nat = Just (Unit, Nat)
 invert (List ty) = Just (ty, List ty)
+invert (Tree ty) = Just (ty, Pair (Tree ty) (Tree ty))
+invert (Pair ty tz) = Just (ty, tz)
 
 instance Show Type where
   show Unit = "()"
   show Nat = "Nat"
   show (List ty) = "[" ++ show ty ++ "]"
+  show (Tree ty) = "{" ++ show ty ++ "}"
+  show (Pair ty tz) = "(" ++ show ty ++ "," ++ show tz ++ ")"
 
 termType :: Term -> Type
 termType (Nil ty) = ty
@@ -55,12 +60,19 @@ instance Show Term where
   showsPrec _ (Nil Unit) = showString "()"
   showsPrec _ (Nil Nat) = showString "0"
   showsPrec _ (Nil (List _)) = showString "[]"
+  showsPrec _ (Nil (Tree _)) = showString "{}"
   showsPrec n (Cons Nat x y) =
     showParen (n > 10) (showsPrec 11 y . showString "+1")
   showsPrec n (Cons (List _) x y) =
     showParen (n > 10) (showsPrec 11 x . showString ":" . showsPrec 0 y)
   showsPrec n (Cons Unit x y) =
     error "show: Cons _ _ :: Unit"
+  showsPrec n (Cons (Tree _) x (Cons _ y z)) =
+    showString "{" . shows x . showString "," . shows y . showString "," . shows z . showString "}"
+  showsPrec n (Cons (Tree _) x y) =
+    showString "{" . shows x . showString "," . shows y . showString "}"
+  showsPrec n (Cons (Pair _ _) x y) =
+    showString "(" . shows x . showString "," . shows y . showString ")"
   showsPrec n (Var ty i) = showString (twiddle ty (vars !! i))
     where
       twiddle (List ty) x = twiddle ty (x ++ "s")
@@ -69,6 +81,11 @@ instance Show Term where
 class Lisp a where
   fromTerm :: Term -> a
   sample :: a -> Set
+
+instance Lisp () where
+  fromTerm (Nil _) = ()
+
+  sample _ = nil Unit
 
 instance Lisp Int where
   fromTerm (Nil Nat) = 0
@@ -82,6 +99,23 @@ instance Lisp a => Lisp [a] where
 
   sample xs = listOf sx (List (setType sx)) 3
     where sx = sample (head xs)
+
+instance (Lisp a, Lisp b) => Lisp (a, b) where
+  fromTerm (Cons _ x y) = (fromTerm x, fromTerm y)
+
+  sample ~(x, y) = ConsS (Pair (setType sx) (setType sy)) sx sy
+    where
+      sx = sample x
+      sy = sample y
+
+data Tree a = Node a (Tree a) (Tree a) | Leaf
+
+instance Lisp a => Lisp (Tree a) where
+  fromTerm (Cons _ x (Cons _ y z)) = Node (fromTerm x) (fromTerm y) (fromTerm z)
+  fromTerm (Nil _) = Leaf
+
+  sample ~(Node x _ _) = treeOf sx (Tree (setType sx)) 3
+    where sx = sample x
 
 -- Sets of test data.
 data Set
@@ -116,6 +150,11 @@ singleton Var{} = error "singleton: non-ground term"
 listOf :: Set -> Type -> Int -> Set
 listOf x ty 0 = nil ty
 listOf x ty n = InsertNil ty (ConsS ty x (listOf x ty (n-1)))
+
+treeOf :: Set -> Type -> Int -> Set
+treeOf x ty 0 = nil ty
+treeOf x ty n = InsertNil ty (ConsS ty x (ConsS (Pair ty ty) y y))
+  where y = treeOf x ty (n-1)
 
 -- Patterns.
 data Pattern = Pattern {
@@ -531,6 +570,11 @@ plus = predicate2 (+)
 
 mult :: Int -> Int -> Int -> Bool
 mult = predicate2 (*)
+
+depthIs :: Int -> Tree () -> Bool
+depthIs 0 Leaf = True
+depthIs n (Node _ l r) = depthIs (n-1) l && depthIs (n-1) r
+depthIs _ _ = False
 
 predicate :: Eq b => (a -> b) -> (a -> b -> Bool)
 predicate f x y = f x == y
