@@ -595,3 +595,5 @@ rev xs = reverse xs == xs
 
 even :: Int -> Bool
 even x = x `mod` 2 == 0
+
+main = print (guess (sorted))
