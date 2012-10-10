@@ -431,8 +431,10 @@ descending args patts
 candidates2 :: Int -> Predicate -> [[Clause] -> Clause]
 candidates2 0 _ = []
 candidates2 depth pred = do
-  d <- [0..depth-1]
-  pol <- [True, False]
+  -- d <- [0..depth-1]
+  -- pol <- [True, False]
+  let pol = False
+      d = depth-1
   patts <- sortBy (comparing patternsOrder) $ mapM patterns (predType pred)
   guard (not (all trivial patts))
   let polarise f = if pol then id else f
