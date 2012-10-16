@@ -349,7 +349,7 @@ showTarget _ (Call prog) = do
 
 showArgs :: [Term] -> String
 showArgs [] = ""
-showArgs ts = "(" ++ intercalate "," (map show ts) ++ ")"
+showArgs ts = "(" ++ intercalate ", " (map show ts) ++ ")"
 
 -- Evaluation.
 evaluate :: Program -> [Term] -> Bool
