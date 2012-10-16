@@ -11,11 +11,20 @@
 --   mult(X+1,Y,Z) :- mult(X,Y,Q), add(Q,Y,Z)
 -- we can try mult(X,Y,Q) and use that to generate test data
 -- (for Q) to synthesise add.
+-- This works only because mult is a function (X,Y -> Q)---
+-- good because it gives us a better way of synthesising functions
+-- and we won't get too many conjuncts
 
 -- "Inverse entailment and Progol" gives:
 --   f(A, B) :- d(A, C), f(C, D), m(A, D, B)
 -- where f is factorial and d is predecessor.
 -- Look---pattern-matching is conjunction!
+-- This gives a nice way of incorporating equality, etc.
+-- This means that normal candidates don't need to follow
+-- traditional pattern matching.
+-- We could still say that synthesised predicates
+-- must use only simple pattern matching, to reduce
+-- the amount of choice.
 
 {-# LANGUAGE ScopedTypeVariables #-}
 module Main where
