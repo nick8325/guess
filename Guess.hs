@@ -281,10 +281,10 @@ instance Show Clause where
 clauseOrder (Clause pattern rhs) =
   (patternsOrder pattern, rhsOrder rhs)
 
-data RHS = Bot | App Target [Term] | Not RHS deriving Show
+data RHS = Top | App Target [Term] | Not RHS deriving Show
 data Target = Self | Call Program deriving Show
 
-rhsOrder Bot = 0
+rhsOrder Top = 0
 rhsOrder (Not r) = 1+rhsOrder r
 rhsOrder App{} = 2
 
@@ -330,7 +330,7 @@ showClause name (Clause patts rhs) = do
     vs = zipWith Var (concatMap bound patts) [0..]
 
 showRHS :: String -> RHS -> ShowM ()
-showRHS _ Bot = tell "False"
+showRHS _ Top = tell "True"
 showRHS name (Not x) = do
   tell "~"
   showRHS name x
@@ -355,16 +355,16 @@ evaluate p@(Program _ cs) ts = evaluateClauses (evaluate p) cs ts
 
 evaluateClauses :: ([Term] -> Bool) -> [Clause] -> [Term] -> Bool
 evaluateClauses p cs ts =
-  and [ evaluateClause p c ts | c <- cs ]
+  or [ evaluateClause p c ts | c <- cs ]
 
 evaluateClause :: ([Term] -> Bool) -> Clause -> [Term] -> Bool
 evaluateClause p (Clause patts rhs) ts =
-  and [ evaluateRHS p rhs us
+  or [ evaluateRHS p rhs us
       | Just ss <- [matchPatts patts (map singleton ts)],
         us <- mapM table ss ]
 
 evaluateRHS :: ([Term] -> Bool) -> RHS -> [Term] -> Bool
-evaluateRHS _ Bot _ = False
+evaluateRHS _ Top _ = True
 evaluateRHS p (Not r) ts = not (evaluateRHS p r ts)
 evaluateRHS p (App Self ts) us = p (map (subst us) ts)
 evaluateRHS _ (App (Call p) ts) us = evaluate p (map (subst us) ts)
@@ -378,15 +378,15 @@ subst ts n@Nil{} = n
 implements, consistentWith :: ([Term] -> Bool) -> Predicate -> Bool
 f `implements` pred = and [ f ts == func pred ts | ts <- tests pred ]
 f `consistentWith` pred =
-  and [ not (func pred ts) || f ts | ts <- tests pred ]
+  and [ func pred ts || not (f ts) | ts <- tests pred ]
 
 extends :: ([Term] -> Bool) -> ([Term] -> Bool) -> Predicate -> Bool
-extends f g pred = or [ not (f ts) && g ts | ts <- tests pred ]
+extends f g pred = or [ f ts && not (g ts) | ts <- tests pred ]
 
 except :: Predicate -> ([Term] -> Bool) -> Predicate
 except pred f = Predicate {
   domain = domain pred,
-  specified = \ts -> specified pred ts && f ts,
+  specified = \ts -> specified pred ts && not (f ts),
   func = func pred
   }
 
@@ -420,7 +420,7 @@ refine pred cs (f:fs)
 candidates1 :: [Type] -> [Clause]
 candidates1 args = sortBy (comparing clauseOrder) $ do
   patts <- mapM patterns args
-  rhs <- Bot:
+  rhs <- Top:
          map (App Self) (descending args patts)
   return (Clause patts rhs)
 
@@ -501,11 +501,11 @@ candidateClauses (Clause patt rhs) =
   map (Clause patt) (candidateRHSs rhs)
 
 candidateRHSs :: RHS -> [RHS]
-candidateRHSs Bot = []
-candidateRHSs (Not r) = Bot:map Not (candidateRHSs r)
-candidateRHSs (App Self ts) = [Bot]
+candidateRHSs Top = []
+candidateRHSs (Not r) = Top:map Not (candidateRHSs r)
+candidateRHSs (App Self ts) = [Top]
 candidateRHSs (App (Call prog) ts) =
-  Bot:[ App (Call prog') ts | prog' <- candidates prog ]
+  Top:[ App (Call prog') ts | prog' <- candidates prog ]
 
 -- A nicer interface.
 class Pred a where
