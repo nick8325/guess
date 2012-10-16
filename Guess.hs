@@ -284,6 +284,15 @@ clauseOrder (Clause pattern rhs) =
 data RHS = Top | App Target [Term] | Not RHS | Shrink RHS (Maybe RHS) deriving Show
 data Target = Self | Call Program deriving Show
 
+depth :: Program -> Int
+depth (Program _ cs) = maximum (0:map (rhsDepth . rhs) cs)
+
+rhsDepth Top = 0
+rhsDepth (App (Call p) _) = 1+depth p
+rhsDepth (App Self _) = 0
+rhsDepth (Not r) = rhsDepth r
+rhsDepth (Shrink r _) = rhsDepth r
+
 rhsOrder Top = 0
 rhsOrder (Not r) = 1+rhsOrder r
 rhsOrder App{} = 2
@@ -444,22 +453,17 @@ descending args patts
 
 candidates2 :: Int -> Predicate -> [[Clause] -> Clause]
 candidates2 0 _ = []
-candidates2 depth pred = do
-  -- d <- [0..depth-1]
-  -- pol <- [True, False]
-  let pol = False
-      d = depth-1
+candidates2 d pred = do
   patts <- sortBy (comparing patternsOrder) $ mapM patterns (predType pred)
   guard (not (all trivial patts))
-  let polarise f = if pol then id else f
-  return
-    (\cs ->
-      Clause patts
-       (polarise Not
-        (synthesise d
-         (matchPred patts
-          (polarise negate
-           (pred `except` evaluateClauses (func pred) cs))))))
+  return $ \cs ->
+    let pred' = matchPred patts (pred `except` evaluateClauses (func pred) cs)
+        prog = Not (synthesise (d-1) (negate pred'))
+        prog' = synthesise (rhsDepth prog-1) pred'
+    in
+     Clause patts . Shrink prog $
+       if evaluateRHS (error "candidates2: recursive synthesis")
+            prog' `implements` pred' then Just prog' else Nothing
 
 synthesise :: Int -> Predicate -> RHS
 synthesise depth pred =
