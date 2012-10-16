@@ -281,12 +281,13 @@ instance Show Clause where
 clauseOrder (Clause pattern rhs) =
   (patternsOrder pattern, rhsOrder rhs)
 
-data RHS = Top | App Target [Term] | Not RHS deriving Show
+data RHS = Top | App Target [Term] | Not RHS | Shrink RHS (Maybe RHS) deriving Show
 data Target = Self | Call Program deriving Show
 
 rhsOrder Top = 0
 rhsOrder (Not r) = 1+rhsOrder r
 rhsOrder App{} = 2
+rhsOrder (Shrink r _) = rhsOrder r
 
 type ShowM = StateT ShowState (Writer String)
 data ShowState = ShowState {
@@ -339,6 +340,7 @@ showRHS name (Not x) = do
 showRHS name (App f ts) = do
   showTarget name f
   tell (showArgs ts)
+showRHS name (Shrink r _)= showRHS name r
 
 showTarget :: String -> Target -> ShowM ()
 showTarget name Self = tell name
@@ -370,6 +372,7 @@ evaluateRHS _ Top _ = True
 evaluateRHS p (Not r) ts = not (evaluateRHS p r ts)
 evaluateRHS p (App Self ts) us = p (map (subst us) ts)
 evaluateRHS _ (App (Call p) ts) us = evaluate p (map (subst us) ts)
+evaluateRHS p (Shrink r _) ts = evaluateRHS p r ts
 
 subst :: [Term] -> Term -> Term
 subst ts (Var _ i) = ts !! i
@@ -508,6 +511,8 @@ candidateRHSs (Not r) = Top:map Not (candidateRHSs r)
 candidateRHSs (App Self ts) = [Top]
 candidateRHSs (App (Call prog) ts) =
   Top:[ App (Call prog') ts | prog' <- candidates prog ]
+candidateRHSs (Shrink r Nothing) = [r]
+candidateRHSs (Shrink _ (Just r)) = [r]
 
 -- A nicer interface.
 class Pred a where
