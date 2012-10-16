@@ -73,7 +73,7 @@ instance Show Term where
   showsPrec n (Cons Nat x y) =
     showParen (n > 10) (showsPrec 11 y . showString "+1")
   showsPrec n (Cons (List _) x y) =
-    showParen (n > 10) (showsPrec 11 x . showString ":" . showsPrec 0 y)
+    showString "[" . showsPrec 0 x . showString "|" . showsPrec 0 y . showString "]"
   showsPrec n (Cons Unit x y) =
     error "show: Cons _ _ :: Unit"
   showsPrec n (Cons (Tree _) x (Cons _ y z)) =
@@ -296,7 +296,7 @@ data ShowState = ShowState {
 
 preds, vars :: [String]
 preds = infinite ['p','q','r','s']
-vars = infinite $ ['x','y','z','w','t','u','v']
+vars = infinite $ ['X','Y','Z','W','T','U','V']
 infinite xs = concat [ replicateM n xs | n <- [1..] ]
 
 instance Show Program where
@@ -316,23 +316,25 @@ loop f = do
 showProgram :: String -> Program -> ShowM ()
 showProgram name (Program args cs) = do
   tell $
-    name ++ " :: " ++
+    "%% " ++ name ++ " :: " ++
     concat [ show ty ++ " -> " | ty <- args ] ++ "Bool\n"
   mapM_ (showClause name) cs
   tell "\n"
 
 showClause :: String -> Clause -> ShowM ()
 showClause name (Clause patts rhs) = do
-  tell $ name ++ showArgs (undoPatts patts vs) ++ " -> "
-  showRHS name rhs
-  tell "\n"
+  tell $ name ++ showArgs (undoPatts patts vs)
+  unless (case rhs of Top -> True; _ -> False) $ do
+    tell " :- "
+    showRHS name rhs
+  tell ".\n"
   where
     vs = zipWith Var (concatMap bound patts) [0..]
 
 showRHS :: String -> RHS -> ShowM ()
-showRHS _ Top = tell "True"
+showRHS _ Top = tell "true"
 showRHS name (Not x) = do
-  tell "~"
+  tell "not "
   showRHS name x
 showRHS name (App f ts) = do
   showTarget name f
@@ -347,7 +349,7 @@ showTarget _ (Call prog) = do
 
 showArgs :: [Term] -> String
 showArgs [] = ""
-showArgs ts = " (" ++ intercalate ", " (map show ts) ++ ")"
+showArgs ts = "(" ++ intercalate "," (map show ts) ++ ")"
 
 -- Evaluation.
 evaluate :: Program -> [Term] -> Bool
