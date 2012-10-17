@@ -25,11 +25,13 @@
 -- We could still say that synthesised predicates
 -- must use only simple pattern matching, to reduce
 -- the amount of choice.
+--
+-- not . anyLeq: I suspect we need lossless join decomposition.
 
 {-# LANGUAGE ScopedTypeVariables #-}
 module Main where
 
-import Prelude hiding (elem, pred, negate)
+import Prelude hiding (elem, pred, negate, even)
 import Control.Monad
 import Control.Monad.State
 import Control.Monad.Writer
@@ -38,7 +40,7 @@ import Data.Maybe
 import Data.Function
 import Data.Ord
 import Control.Spoon
-import Debug.Trace
+import System.Timeout
 
 -- Lisp terms.
 data Term = Nil Type | Cons Type Term Term | Var Type Int
@@ -546,6 +548,11 @@ instance (Lisp a, Pred b) => Pred (a -> b) where
   specified_ f (x:xs) = specified_ (f (fromTerm x)) xs
   func_ f (x:xs) = func_ (f (fromTerm x)) xs
 
+instance Pred Predicate where
+  domain_ = domain
+  specified_ = specified
+  func_ = func
+
 pred :: Pred a => a -> Predicate
 pred x = Predicate {
   domain = domain_ x,
@@ -554,11 +561,7 @@ pred x = Predicate {
   }
 
 guess :: Pred a => a -> Program
-guess x =
-  let prog = guess_ 10 (pred x)
-  in if evaluate prog `implements` pred x
-     then shrink (pred x) prog
-     else error "guess failed"
+guess x = shrink (pred x) (guess_ 10 (pred x))
 
 -- Examples.
 sorted :: [Int] -> Bool
@@ -627,4 +630,31 @@ rev xs = reverse xs == xs
 even :: Int -> Bool
 even x = x `mod` 2 == 0
 
-main = print (guess sorted)
+main = do
+  run "sorted" sorted
+  run "sortPred" sortPred
+  run "anyLeq" anyLeq
+  run "allLeq" allLeq
+  run "append" append
+  run "zipRev" zipRev
+  run "lastDrop" lastDrop
+  run "leq" leq
+  run "plus" plus
+  run "mult" mult
+  run "depthIs" depthIs
+  run "nubbed" nubbed
+  run "noconsec" noconsec
+  run "rev" rev
+  run "even" even
+  where
+    run name prog = do
+      putStrLn ("=== " ++ name)
+      run1 prog
+      putStrLn ("=== not . " ++ name)
+      run1 (negate (pred prog))
+    run1 prog = do
+      r <- timeout 5000000 (print (guess prog))
+      when (r == Nothing) $ do
+        putStrLn "Timeout!"
+        putStrLn ""
+        putStrLn ""
