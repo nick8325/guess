@@ -293,6 +293,15 @@ rhsDepth (App Self _) = 0
 rhsDepth (Not r) = rhsDepth r
 rhsDepth (Shrink r _) = rhsDepth r
 
+numVars :: Program -> Int
+numVars (Program args cs) = length args + sum (map (rhsVars . rhs) cs)
+
+rhsVars Top = 0
+rhsVars (App (Call p) _) = numVars p
+rhsVars (App Self _) = 0
+rhsVars (Not r) = rhsVars r
+rhsVars (Shrink r _) = rhsVars r
+
 rhsOrder Top = 0
 rhsOrder (Not r) = 1+rhsOrder r
 rhsOrder App{} = 2
@@ -460,10 +469,12 @@ candidates2 d pred = do
     let pred' = matchPred patts (pred `except` evaluateClauses (func pred) cs)
         prog = Not (synthesise (d-1) (negate pred'))
         prog' = synthesise (rhsDepth prog-1) pred'
+        err = error "candidates2: recursive synthesis"
     in
      Clause patts . Shrink prog $
-       if evaluateRHS (error "candidates2: recursive synthesis")
-            prog' `implements` pred' then Just prog' else Nothing
+       if evaluateRHS err prog' `implements` pred' &&
+          rhsVars prog' <= rhsVars prog
+       then Just prog' else Nothing
 
 synthesise :: Int -> Predicate -> RHS
 synthesise depth pred =
