@@ -657,7 +657,7 @@ main = do
       putStrLn ("=== not . " ++ name)
       run1 (negate (pred prog))
     run1 prog = do
-      r <- timeout 5000000 (print (guess prog))
+      r <- timeout 10000000 (print (guess prog))
       when (r == Nothing) $ do
         putStrLn "Timeout!"
         putStrLn ""
