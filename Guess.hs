@@ -627,6 +627,9 @@ noconsec xs = map head (group xs) == xs
 rev :: [Int] -> Bool
 rev xs = reverse xs == xs
 
+reverse_ :: [Int] -> [Int] -> Bool
+reverse_ = predicate reverse
+
 even :: Int -> Bool
 even x = x `mod` 2 == 0
 
@@ -645,6 +648,7 @@ main = do
   run "nubbed" nubbed
   run "noconsec" noconsec
   run "rev" rev
+  run "reverse" reverse_
   run "even" even
   where
     run name prog = do
