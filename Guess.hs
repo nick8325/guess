@@ -5,8 +5,6 @@
 --
 -- Allow variables to appear twice in patterns (equality).
 --
--- Synthesise predicates using a subset of all available variables.
---
 -- Allow conjunction w/ synthesised predicates e.g.
 --   mult(X+1,Y,Z) :- mult(X,Y,Q), add(Q,Y,Z)
 -- we can try mult(X,Y,Q) and use that to generate test data
