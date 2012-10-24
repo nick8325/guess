@@ -633,7 +633,18 @@ reverse_ = predicate reverse
 even :: Int -> Bool
 even x = x `mod` 2 == 0
 
+-- Shows the importance of three-valued logic
+nasty :: Predicate
+nasty = Predicate {
+  domain = replicate 2 (sample (undefined :: Int)),
+  specified = \[t, u] ->
+    (fromTerm t, fromTerm u) /= ((0, 0) :: (Int, Int)),
+  func = \[t, u] ->
+    (fromTerm t :: Int) == (fromTerm u :: Int)
+  }
+
 main = do
+  run "nasty" nasty
   run "sorted" sorted
   run "sortPred" sortPred
   run "anyLeq" anyLeq
