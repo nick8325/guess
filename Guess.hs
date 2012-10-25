@@ -25,6 +25,48 @@
 -- the amount of choice.
 --
 -- not . anyLeq: I suspect we need lossless join decomposition.
+--
+-- Shrink the test data: given a program,
+-- find the minimal set of test data that leads to that program.
+--
+-- Wait---do we really need [| prog |] to be monotone?!
+-- Provided that each clause is consistent with the
+-- target predicate, we can always recover the predicate
+-- by adding more clauses. Does this make subsynthesis harder?
+--
+-- Think about problem whereby changing T/F to X in a specification
+-- can make a predicate unguessable by weakening recursive case.
+-- Think about interaction with idea to intersect guessed predicate
+-- with recursive calls. I think I worked out it would be alright.
+-- It makes some things X that would've been F before.
+-- Those things would've been T in the subprogram because of
+-- negation. Changing T to X makes it easier to satisfy clauses.
+-- But if that subprogram in turn synthesises a new predicate,
+-- that predicate will have things that are X but would have been F.
+-- Wait, I don't understand---doesn't that make it easier to satisfy clauses too?
+--
+-- But it is plainly the case that if we go with e.g.
+--  \xs ys -> if xs == ys then xs == reverse ys else X
+-- that this is harder to discover than
+--  \xs ys -> xs == reverse ys
+-- So something is up with the recursive calls.
+-- What is it, and can it affect conjunctions of recursive and
+-- synthesised calls?
+--
+-- Also, remember that
+--   p & q & ~r = ~(~p | ~q | r)
+-- so maybe (maybe) we can avoid conjunction of synthed predicates
+-- altogether and use mutual recursion to do the same trick.
+-- Or maybe synthesised predicates are only useful when they
+-- allow us to decompose a problem by eliminating variables.
+--
+-- There clearly is a problem with the "X"s we generate in subpredicates.
+-- Maybe the current approach (accidentally evaluate the parent predicate
+-- when checking recursive calls) is the best one. Each X on the RHS
+-- of a recursive call gives us a choice---did the recursive call return
+-- true or not? By evaluating the parent predicate, we make an arbitrary
+-- choice. But is this sound? Isn't this exactly what the "nasty"
+-- example proves is unsound?
 
 {-# LANGUAGE ScopedTypeVariables #-}
 module Main where
