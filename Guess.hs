@@ -67,6 +67,9 @@
 -- true or not? By evaluating the parent predicate, we make an arbitrary
 -- choice. But is this sound? Isn't this exactly what the "nasty"
 -- example proves is unsound?
+--
+-- Try printing out all places where we have an "X" that's reachable
+-- by recursion from a non-"X".
 
 {-# LANGUAGE ScopedTypeVariables #-}
 module Main where
