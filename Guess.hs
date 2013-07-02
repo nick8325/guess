@@ -70,6 +70,8 @@
 --
 -- Try printing out all places where we have an "X" that's reachable
 -- by recursion from a non-"X".
+--
+-- Add synthesised candidates to shrink list.
 
 {-# LANGUAGE ScopedTypeVariables #-}
 module Main where
@@ -324,14 +326,14 @@ clauseOrder (Clause pattern rhs) =
   (patternsOrder pattern, rhsOrder rhs)
 
 data RHS = Top | App Target [Term] | Not RHS | Shrink RHS (Maybe RHS) deriving Show
-data Target = Self | Call Program deriving Show
+data Target = Rec Int | Call Program deriving Show
 
 depth :: Program -> Int
 depth (Program _ cs) = maximum (0:map (rhsDepth . rhs) cs)
 
 rhsDepth Top = 0
 rhsDepth (App (Call p) _) = 1+depth p
-rhsDepth (App Self _) = 0
+rhsDepth (App (Rec _) _) = 0
 rhsDepth (Not r) = rhsDepth r
 rhsDepth (Shrink r _) = rhsDepth r
 
@@ -340,7 +342,7 @@ numVars (Program args cs) = length args + sum (map (rhsVars . rhs) cs)
 
 rhsVars Top = 0
 rhsVars (App (Call p) _) = numVars p
-rhsVars (App Self _) = 0
+rhsVars (App (Rec _) _) = 0
 rhsVars (Not r) = rhsVars r
 rhsVars (Shrink r _) = rhsVars r
 
@@ -352,7 +354,7 @@ rhsOrder (Shrink r _) = rhsOrder r
 type ShowM = StateT ShowState (Writer String)
 data ShowState = ShowState {
   names :: [String],
-  queue :: [(String, Program)]
+  queue :: [([String], Program)]
   }
 
 preds, vars :: [String]
@@ -362,9 +364,9 @@ infinite xs = concat [ replicateM n xs | n <- [1..] ]
 
 instance Show Program where
   show p =
-    execWriter (execStateT (loop showProgram) (ShowState (tail preds) [(head preds, p)]))
+    execWriter (execStateT (loop showProgram) (ShowState (tail preds) [(take 1 preds, p)]))
 
-loop :: (String -> Program -> ShowM ()) -> ShowM ()
+loop :: ([String] -> Program -> ShowM ()) -> ShowM ()
 loop f = do
   ShowState ns q <- get
   case q of
@@ -374,39 +376,39 @@ loop f = do
       f n p
       loop f
 
-showProgram :: String -> Program -> ShowM ()
-showProgram name (Program args cs) = do
+showProgram :: [String] -> Program -> ShowM ()
+showProgram names (Program args cs) = do
   tell $
-    "%% " ++ name ++ " :: " ++
+    "%% " ++ head names ++ " :: " ++
     concat [ show ty ++ " -> " | ty <- args ] ++ "Bool\n"
-  mapM_ (showClause name) cs
+  mapM_ (showClause names) cs
   tell "\n"
 
-showClause :: String -> Clause -> ShowM ()
-showClause name (Clause patts rhs) = do
-  tell $ name ++ showArgs (undoPatts patts vs)
+showClause :: [String] -> Clause -> ShowM ()
+showClause names (Clause patts rhs) = do
+  tell $ head names ++ showArgs (undoPatts patts vs)
   unless (case rhs of Top -> True; _ -> False) $ do
     tell " :- "
-    showRHS name rhs
+    showRHS names rhs
   tell ".\n"
   where
     vs = zipWith Var (concatMap bound patts) [0..]
 
-showRHS :: String -> RHS -> ShowM ()
+showRHS :: [String] -> RHS -> ShowM ()
 showRHS _ Top = tell "true"
-showRHS name (Not x) = do
+showRHS names (Not x) = do
   tell "not "
-  showRHS name x
-showRHS name (App f ts) = do
-  showTarget name f
+  showRHS names x
+showRHS names (App f ts) = do
+  showTarget names f
   tell (showArgs ts)
-showRHS name (Shrink r _)= showRHS name r
+showRHS names (Shrink r _)= showRHS names r
 
-showTarget :: String -> Target -> ShowM ()
-showTarget name Self = tell name
-showTarget _ (Call prog) = do
+showTarget :: [String] -> Target -> ShowM ()
+showTarget names (Rec i) = tell (names !! i)
+showTarget ctx (Call prog) = do
   ShowState (name:names) progs <- get
-  put (ShowState names (progs ++ [(name, prog)]))
+  put (ShowState names (progs ++ [(name:ctx, prog)]))
   tell name
 
 showArgs :: [Term] -> String
@@ -432,24 +434,24 @@ eq3 _ _ = False
 
 -- Evaluation.
 evaluate :: Program -> [Term] -> Maybe Bool
-evaluate p@(Program _ cs) ts = evaluateClauses (evaluate p) cs ts
+evaluate p@(Program _ cs) ts = evaluateClauses [evaluate p] cs ts
 
-evaluateClauses :: ([Term] -> Maybe Bool) -> [Clause] -> [Term] -> Maybe Bool
-evaluateClauses p cs ts =
-  ors3 [ evaluateClause p c ts | c <- cs ]
+evaluateClauses :: [[Term] -> Maybe Bool] -> [Clause] -> [Term] -> Maybe Bool
+evaluateClauses ps cs ts =
+  ors3 [ evaluateClause ps c ts | c <- cs ]
 
-evaluateClause :: ([Term] -> Maybe Bool) -> Clause -> [Term] -> Maybe Bool
-evaluateClause p (Clause patts rhs) ts =
-  ors3 [ evaluateRHS p rhs us
+evaluateClause :: [[Term] -> Maybe Bool] -> Clause -> [Term] -> Maybe Bool
+evaluateClause ps (Clause patts rhs) ts =
+  ors3 [ evaluateRHS ps rhs us
        | Just ss <- [matchPatts patts (map singleton ts)],
          us <- mapM table ss ]
 
-evaluateRHS :: ([Term] -> Maybe Bool) -> RHS -> [Term] -> Maybe Bool
+evaluateRHS :: [[Term] -> Maybe Bool] -> RHS -> [Term] -> Maybe Bool
 evaluateRHS _ Top _ = Just True
-evaluateRHS p (Not r) ts = not3 (evaluateRHS p r ts)
-evaluateRHS p (App Self ts) us = p (map (subst us) ts)
+evaluateRHS ps (Not r) ts = not3 (evaluateRHS ps r ts)
+evaluateRHS ps (App (Rec i) ts) us = (ps !! i) (map (subst us) ts)
 evaluateRHS _ (App (Call p) ts) us = evaluate p (map (subst us) ts)
-evaluateRHS p (Shrink r _) ts = evaluateRHS p r ts
+evaluateRHS ps (Shrink r _) ts = evaluateRHS ps r ts
 
 subst :: [Term] -> Term -> Term
 subst ts (Var _ i) = ts !! i
