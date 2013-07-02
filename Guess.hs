@@ -279,15 +279,14 @@ undoPatts (p:ps) ts = undo p us:undoPatts ps vs
 -- Predicates.
 data Predicate = Predicate {
   domain :: [Set],
-  specified :: [Term] -> Bool,
-  func :: [Term] -> Bool
+  func :: [Term] -> Maybe Bool
   }
 
 predType :: Predicate -> [Type]
 predType = map setType . domain
 
 tests :: Predicate -> [[Term]]
-tests pred = [ ts | ts <- mapM table (domain pred), specified pred ts ]
+tests pred = [ ts | ts <- mapM table (domain pred), func pred ts /= Nothing ]
 
 matchPred :: [Pattern] -> Predicate -> Predicate
 matchPred patts pred =
@@ -295,14 +294,12 @@ matchPred patts pred =
     Just domain ->
       Predicate {
         domain = domain,
-        specified = specified pred . undoPatts patts,
         func = func pred . undoPatts patts
         }
     Nothing ->
       Predicate {
         domain = map Empty (predType pred),
-        specified = const False,
-        func = const True
+        func = const Nothing
         }
 
 -- Programs.
@@ -416,23 +413,40 @@ showArgs :: [Term] -> String
 showArgs [] = ""
 showArgs ts = "(" ++ intercalate ", " (map show ts) ++ ")"
 
+-- 3-valued logic.
+or3 :: Maybe Bool -> Maybe Bool -> Maybe Bool
+or3 (Just True) _ = Just True
+or3 _ (Just True) = Just True
+or3 (Just False) (Just False) = Just False
+or3 _ _ = Nothing
+
+ors3 :: [Maybe Bool] -> Maybe Bool
+ors3 = foldr or3 (Just False)
+
+not3 :: Maybe Bool -> Maybe Bool
+not3 = fmap not
+
+eq3 :: Maybe Bool -> Maybe Bool -> Bool
+eq3 (Just x) (Just y) = x == y
+eq3 _ _ = False
+
 -- Evaluation.
-evaluate :: Program -> [Term] -> Bool
+evaluate :: Program -> [Term] -> Maybe Bool
 evaluate p@(Program _ cs) ts = evaluateClauses (evaluate p) cs ts
 
-evaluateClauses :: ([Term] -> Bool) -> [Clause] -> [Term] -> Bool
+evaluateClauses :: ([Term] -> Maybe Bool) -> [Clause] -> [Term] -> Maybe Bool
 evaluateClauses p cs ts =
-  or [ evaluateClause p c ts | c <- cs ]
+  ors3 [ evaluateClause p c ts | c <- cs ]
 
-evaluateClause :: ([Term] -> Bool) -> Clause -> [Term] -> Bool
+evaluateClause :: ([Term] -> Maybe Bool) -> Clause -> [Term] -> Maybe Bool
 evaluateClause p (Clause patts rhs) ts =
-  or [ evaluateRHS p rhs us
-      | Just ss <- [matchPatts patts (map singleton ts)],
-        us <- mapM table ss ]
+  ors3 [ evaluateRHS p rhs us
+       | Just ss <- [matchPatts patts (map singleton ts)],
+         us <- mapM table ss ]
 
-evaluateRHS :: ([Term] -> Bool) -> RHS -> [Term] -> Bool
-evaluateRHS _ Top _ = True
-evaluateRHS p (Not r) ts = not (evaluateRHS p r ts)
+evaluateRHS :: ([Term] -> Maybe Bool) -> RHS -> [Term] -> Maybe Bool
+evaluateRHS _ Top _ = Just True
+evaluateRHS p (Not r) ts = not3 (evaluateRHS p r ts)
 evaluateRHS p (App Self ts) us = p (map (subst us) ts)
 evaluateRHS _ (App (Call p) ts) us = evaluate p (map (subst us) ts)
 evaluateRHS p (Shrink r _) ts = evaluateRHS p r ts
@@ -443,23 +457,22 @@ subst ts (Cons ty t u) = Cons ty (subst ts t) (subst ts u)
 subst ts n@Nil{} = n
 
 -- Predicate operators.
-implements, consistentWith :: ([Term] -> Bool) -> Predicate -> Bool
-f `implements` pred = and [ f ts == func pred ts | ts <- tests pred ]
+implements, consistentWith :: ([Term] -> Maybe Bool) -> Predicate -> Bool
+f `implements` pred = and [ f ts `eq3` func pred ts | ts <- tests pred ]
 f `consistentWith` pred =
-  and [ func pred ts || not (f ts) | ts <- tests pred ]
+  and [ func pred ts == Just True || f ts == Just False | ts <- tests pred ]
 
-extends :: ([Term] -> Bool) -> ([Term] -> Bool) -> Predicate -> Bool
-extends f g pred = or [ f ts && not (g ts) | ts <- tests pred ]
+extends :: ([Term] -> Maybe Bool) -> ([Term] -> Maybe Bool) -> Predicate -> Bool
+extends f g pred = or [ f ts == Just True && g ts /= Just True | ts <- tests pred ]
 
-except :: Predicate -> ([Term] -> Bool) -> Predicate
+except :: Predicate -> ([Term] -> Maybe Bool) -> Predicate
 except pred f = Predicate {
   domain = domain pred,
-  specified = \ts -> specified pred ts && not (f ts),
-  func = func pred
+  func = \ts -> if f ts == Just True then Nothing else func pred ts
   }
 
 negate :: Predicate -> Predicate
-negate pred = pred { func = not . func pred }
+negate pred = pred { func = not3 . func pred }
 
 -- Guessing.
 guess_ :: Int -> Predicate -> Program
@@ -577,29 +590,24 @@ candidateRHSs (Shrink _ (Just r)) = [r]
 -- A nicer interface.
 class Pred a where
   domain_ :: a -> [Set]
-  specified_ :: a -> [Term] -> Bool
-  func_ :: a -> [Term] -> Bool
+  func_ :: a -> [Term] -> Maybe Bool
 
 instance Pred Bool where
   domain_ _ = []
-  specified_ _ [] = True
-  func_ x [] = x
+  func_ x [] = Just x
 
 instance (Lisp a, Pred b) => Pred (a -> b) where
   domain_ f = sample x:domain_ (f x)
     where x = undefined :: a
-  specified_ f (x:xs) = specified_ (f (fromTerm x)) xs
   func_ f (x:xs) = func_ (f (fromTerm x)) xs
 
 instance Pred Predicate where
   domain_ = domain
-  specified_ = specified
   func_ = func
 
 pred :: Pred a => a -> Predicate
 pred x = Predicate {
   domain = domain_ x,
-  specified = specified_ x,
   func = func_ x
   }
 
@@ -680,10 +688,10 @@ even x = x `mod` 2 == 0
 nasty :: Predicate
 nasty = Predicate {
   domain = replicate 2 (sample (undefined :: Int)),
-  specified = \[t, u] ->
-    (fromTerm t, fromTerm u) /= ((0, 0) :: (Int, Int)),
   func = \[t, u] ->
-    (fromTerm t :: Int) == (fromTerm u :: Int)
+    if (fromTerm t, fromTerm u) == ((0, 0) :: (Int, Int))
+    then Nothing
+    else Just ((fromTerm t :: Int) == (fromTerm u :: Int))
   }
 
 main = do
