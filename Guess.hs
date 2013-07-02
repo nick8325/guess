@@ -497,14 +497,14 @@ refine pred cs (f:fs)
   where
     c@(Clause patts rhs) = f cs
     pred' = matchPred patts pred
-    rhs' = evaluateRHS (func pred) rhs
-    cs' = evaluateClauses (func pred) cs . undoPatts patts
+    rhs' = evaluateRHS [func pred] rhs
+    cs' = evaluateClauses [func pred] cs . undoPatts patts
 
 candidates1 :: [Type] -> [Clause]
 candidates1 args = sortBy (comparing clauseOrder) $ do
   patts <- mapM patterns args
   rhs <- Top:
-         map (App Self) (descending args patts)
+         map (App (Rec 0)) (descending args patts)
   return (Clause patts rhs)
 
 descending :: [Type] -> [Pattern] -> [[Term]]
@@ -526,7 +526,7 @@ candidates2 d pred = do
   patts <- sortBy (comparing patternsOrder) $ mapM patterns (predType pred)
   guard (not (all trivial patts))
   return $ \cs ->
-    let pred' = matchPred patts (pred `except` evaluateClauses (func pred) cs)
+    let pred' = matchPred patts (pred `except` evaluateClauses [func pred] cs)
         prog = Not (synthesise (d-1) (negate pred'))
         prog' = synthesise (rhsDepth prog-1) pred'
         err = error "candidates2: recursive synthesis"
@@ -583,7 +583,7 @@ candidateClauses (Clause patt rhs) =
 candidateRHSs :: RHS -> [RHS]
 candidateRHSs Top = []
 candidateRHSs (Not r) = Top:map Not (candidateRHSs r)
-candidateRHSs (App Self ts) = [Top]
+candidateRHSs (App (Rec _) ts) = [Top]
 candidateRHSs (App (Call prog) ts) =
   Top:[ App (Call prog') ts | prog' <- candidates prog ]
 candidateRHSs (Shrink r Nothing) = [r]
