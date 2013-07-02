@@ -478,27 +478,23 @@ negate pred = pred { func = not3 . func pred }
 
 -- Guessing.
 guess_ :: Int -> Predicate -> Program
-guess_ depth pred = Program args (refine pred [] cands)
+guess_ depth pred
+  | evaluate p1 `implements` pred = p1
+  | otherwise = p2
   where
-    args = predType pred
-    cands = map const (candidates1 args) ++
-            candidates2 depth pred
+    p1 = Program args cands
+    p2 = Program args (cands ++ synth)
 
-refine :: Predicate -> [Clause] -> [[Clause] -> Clause] -> [Clause]
-refine pred cs cs'
-  | evaluate (Program (predType pred) cs) `implements` pred = cs
-refine pred cs [] = cs
-refine pred cs (f:fs)
-  | not (cs' `implements` pred') &&
-    rhs' `consistentWith` pred' &&
-    extends rhs' cs' pred' =
-      refine pred (c:cs) fs
-  | otherwise = refine pred cs fs
-  where
-    c@(Clause patts rhs) = f cs
-    pred' = matchPred patts pred
-    rhs' = evaluateRHS [func pred] rhs
-    cs' = evaluateClauses [func pred] cs . undoPatts patts
+    consistentWithPred c =
+      evaluateClause [func pred] c `consistentWith` pred
+
+    args = predType pred
+    cands = filter consistentWithPred (candidates1 args)
+    synth = [ c
+            | c <- candidates2 depth pred',
+              consistentWithPred c,
+              extends (evaluateClause [func pred] c) (evaluate p1) pred' ]
+    pred' = pred `except` evaluateClauses [func pred] cands
 
 candidates1 :: [Type] -> [Clause]
 candidates1 args = sortBy (comparing clauseOrder) $ do
@@ -520,21 +516,19 @@ descending args patts
     wellTyped ts = and (zipWith (==) args (map termType ts))
     uniq = map head . group . sort
 
-candidates2 :: Int -> Predicate -> [[Clause] -> Clause]
+candidates2 :: Int -> Predicate -> [Clause]
 candidates2 0 _ = []
 candidates2 d pred = do
   patts <- sortBy (comparing patternsOrder) $ mapM patterns (predType pred)
   guard (not (all trivial patts))
-  return $ \cs ->
-    let pred' = matchPred patts (pred `except` evaluateClauses [func pred] cs)
-        prog = Not (synthesise (d-1) (negate pred'))
-        prog' = synthesise (rhsDepth prog-1) pred'
-        err = error "candidates2: recursive synthesis"
-    in
-     Clause patts . Shrink prog $
-       if evaluateRHS err prog' `implements` pred' &&
-          rhsVars prog' <= rhsVars prog
-       then Just prog' else Nothing
+  let pred' = matchPred patts pred
+      prog = Not (synthesise (d-1) (negate pred'))
+      prog' = synthesise (rhsDepth prog-1) pred'
+      err = error "candidates2: recursive synthesis"
+  return . Clause patts . Shrink prog $
+    if evaluateRHS err prog' `implements` pred' &&
+      rhsVars prog' <= rhsVars prog
+    then Just prog' else Nothing
 
 synthesise :: Int -> Predicate -> RHS
 synthesise depth pred =
