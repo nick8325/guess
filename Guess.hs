@@ -433,8 +433,8 @@ eq3 (Just x) (Just y) = x == y
 eq3 _ _ = False
 
 -- Evaluation.
-evaluate :: Program -> [Term] -> Maybe Bool
-evaluate p@(Program _ cs) ts = evaluateClauses [evaluate p] cs ts
+evaluate :: [[Term] -> Maybe Bool] -> Program -> [Term] -> Maybe Bool
+evaluate ps p@(Program _ cs) ts = evaluateClauses (evaluate ps p:ps) cs ts
 
 evaluateClauses :: [[Term] -> Maybe Bool] -> [Clause] -> [Term] -> Maybe Bool
 evaluateClauses ps cs ts =
@@ -450,7 +450,7 @@ evaluateRHS :: [[Term] -> Maybe Bool] -> RHS -> [Term] -> Maybe Bool
 evaluateRHS _ Top _ = Just True
 evaluateRHS ps (Not r) ts = not3 (evaluateRHS ps r ts)
 evaluateRHS ps (App (Rec i) ts) us = (ps !! i) (map (subst us) ts)
-evaluateRHS _ (App (Call p) ts) us = evaluate p (map (subst us) ts)
+evaluateRHS ps (App (Call p) ts) us = evaluate ps p (map (subst us) ts)
 evaluateRHS ps (Shrink r _) ts = evaluateRHS ps r ts
 
 subst :: [Term] -> Term -> Term
@@ -477,30 +477,37 @@ negate :: Predicate -> Predicate
 negate pred = pred { func = not3 . func pred }
 
 -- Guessing.
-guess_ :: Int -> Predicate -> Program
-guess_ depth pred
-  | evaluate p1 `implements` pred = p1
+type Context = [Predicate]
+val :: Context -> [[Term] -> Maybe Bool]
+val = map func
+self :: Context -> Predicate
+self = head
+
+guess_ :: Int -> Context -> Program
+guess_ depth ctx
+  | evaluate (val ctx) p1 `implements` self ctx = p1
   | otherwise = p2
   where
     p1 = Program args cands
     p2 = Program args (cands ++ synth)
 
+    args = predType (self ctx)
+    cands = filter consistentWithPred (candidates1 (map predType ctx))
+    synth = filter makesProgress (candidates2 depth ctx pred')
+
     consistentWithPred c =
-      evaluateClause [func pred] c `consistentWith` pred
+      evaluateClause (val ctx) c `consistentWith` self ctx
+    makesProgress c =
+      consistentWithPred c &&
+      extends (evaluateClause (val ctx) c) (evaluate (val ctx) p1) pred'
+    pred' = self ctx `except` evaluateClauses (val ctx) cands
 
-    args = predType pred
-    cands = filter consistentWithPred (candidates1 args)
-    synth = [ c
-            | c <- candidates2 depth pred',
-              consistentWithPred c,
-              extends (evaluateClause [func pred] c) (evaluate p1) pred' ]
-    pred' = pred `except` evaluateClauses [func pred] cands
-
-candidates1 :: [Type] -> [Clause]
-candidates1 args = sortBy (comparing clauseOrder) $ do
+candidates1 :: [[Type]] -> [Clause]
+candidates1 argss = sortBy (comparing clauseOrder) $ do
+  (i, args) <- zip [0..] argss
   patts <- mapM patterns args
   rhs <- Top:
-         map (App (Rec 0)) (descending args patts)
+         map (App (Rec i)) (descending args patts)
   return (Clause patts rhs)
 
 descending :: [Type] -> [Pattern] -> [[Term]]
@@ -516,29 +523,28 @@ descending args patts
     wellTyped ts = and (zipWith (==) args (map termType ts))
     uniq = map head . group . sort
 
-candidates2 :: Int -> Predicate -> [Clause]
-candidates2 0 _ = []
-candidates2 d pred = do
+candidates2 :: Int -> Context -> Predicate -> [Clause]
+candidates2 0 _ _ = []
+candidates2 d ctx pred = do
   patts <- sortBy (comparing patternsOrder) $ mapM patterns (predType pred)
   guard (not (all trivial patts))
   let pred' = matchPred patts pred
-      prog = Not (synthesise (d-1) (negate pred'))
-      prog' = synthesise (rhsDepth prog-1) pred'
-      err = error "candidates2: recursive synthesis"
+      prog = Not (synthesise (d-1) (negate pred':ctx))
+      prog' = synthesise (rhsDepth prog-1) (pred':ctx)
   return . Clause patts . Shrink prog $
-    if evaluateRHS err prog' `implements` pred' &&
+    if evaluateRHS (val ctx) prog' `implements` pred' &&
       rhsVars prog' <= rhsVars prog
     then Just prog' else Nothing
 
-synthesise :: Int -> Predicate -> RHS
-synthesise depth pred =
-  App (Call prog) (filter (relevant pred . varId) vars)
+synthesise :: Int -> Context -> RHS
+synthesise depth ctx =
+  App (Call prog) (filter (relevant (self ctx) . varId) vars)
   where
-    prog = guess_ depth (matchPred rels pred)
+    prog = guess_ depth (matchPred rels (self ctx):ctx)
     varId (Var _ i) = i
-    vars = zipWith Var (predType pred) [0..]
+    vars = zipWith Var (predType (self ctx)) [0..]
     rels = [
-        if relevant pred i then idP ty else nilP ty
+        if relevant (self ctx) i then idP ty else nilP ty
       | Var ty i <- vars ]
 
 relevant p i = not (irrelevant p i)
@@ -555,7 +561,7 @@ shrink :: Predicate -> Program -> Program
 shrink pred prog =
   case [ prog'
        | prog' <- candidates prog,
-         evaluate prog' `implements` pred ] of
+         evaluate [] prog' `implements` pred ] of
     [] -> prog
     (prog':_) -> shrink pred prog'
 
@@ -608,7 +614,7 @@ pred x = Predicate {
   }
 
 guess :: Pred a => a -> Program
-guess x = shrink (pred x) (guess_ 10 (pred x))
+guess x = {- shrink (pred x) -} (guess_ 10 [pred x])
 
 -- Examples.
 sorted :: [Int] -> Bool
