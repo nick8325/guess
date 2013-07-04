@@ -86,6 +86,13 @@ import Data.Function
 import Data.Ord
 import Control.Spoon
 import System.Timeout
+import Debug.Trace
+
+at :: String -> [a] -> Int -> a
+at msg xs i | i < 0 = error $ "<0: " ++ msg
+at msg [] _ = error $ "empty: " ++ msg
+at msg (x:xs) 0 = x
+at msg (x:xs) n = at msg xs (n-1)
 
 -- Lisp terms.
 data Term = Nil Type | Cons Type Term Term | Var Type Int
@@ -129,7 +136,7 @@ instance Show Term where
     showString "{" . shows x . showString "," . shows y . showString "}"
   showsPrec n (Cons (Pair _ _) x y) =
     showString "(" . shows x . showString "," . shows y . showString ")"
-  showsPrec n (Var ty i) = showString (twiddle ty (vars !! i))
+  showsPrec n (Var ty i) = showString (twiddle ty (at "show" vars i))
     where
       twiddle (List ty) x = twiddle ty (x ++ "s")
       twiddle _ x = x
@@ -405,7 +412,7 @@ showRHS names (App f ts) = do
 showRHS names (Shrink r _)= showRHS names r
 
 showTarget :: [String] -> Target -> ShowM ()
-showTarget names (Rec i) = tell (names !! i)
+showTarget names (Rec i) = tell ((names ++ map show [0..]) !! i)
 showTarget ctx (Call prog) = do
   ShowState (name:names) progs <- get
   put (ShowState names (progs ++ [(name:ctx, prog)]))
@@ -449,14 +456,14 @@ evaluateClause ps (Clause patts rhs) ts =
 evaluateRHS :: [[Term] -> Maybe Bool] -> RHS -> [Term] -> Maybe Bool
 evaluateRHS _ Top _ = Just True
 evaluateRHS ps (Not r) ts = not3 (evaluateRHS ps r ts)
-evaluateRHS ps (App (Rec i) ts) us = (ps !! i) (map (subst us) ts)
-evaluateRHS ps (App (Call p) ts) us = evaluate ps p (map (subst us) ts)
+evaluateRHS ps t@(App (Rec i) ts) us = (at "rhs" ps i) (map (subst (t,us) us) ts)
+evaluateRHS ps t@(App (Call p) ts) us = evaluate ps p (map (subst (t,us) us) ts)
 evaluateRHS ps (Shrink r _) ts = evaluateRHS ps r ts
 
-subst :: [Term] -> Term -> Term
-subst ts (Var _ i) = ts !! i
-subst ts (Cons ty t u) = Cons ty (subst ts t) (subst ts u)
-subst ts n@Nil{} = n
+subst :: Show a => a -> [Term] -> Term -> Term
+subst t0 ts t@(Var _ i) = at ("subst " ++ show t0) ts i
+subst t0 ts (Cons ty t u) = Cons ty (subst t0 ts t) (subst t0 ts u)
+subst _ ts n@Nil{} = n
 
 -- Predicate operators.
 implements, consistentWith :: ([Term] -> Maybe Bool) -> Predicate -> Bool
