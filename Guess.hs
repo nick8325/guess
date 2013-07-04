@@ -695,20 +695,21 @@ nasty = Predicate {
 main = do
   run "nasty" nasty
   run "sorted" sorted
-  run "sortPred" sortPred
-  run "anyLeq" anyLeq
-  run "allLeq" allLeq
-  run "append" append
+  -- run "sortPred" sortPred
+  -- run "anyLeq" anyLeq
+  -- run "allLeq" allLeq
+  -- run "append" append
   run "zipRev" zipRev
   run "lastDrop" lastDrop
-  run "leq" leq
+  -- run "leq" leq
   run "plus" plus
-  run "mult" mult
+  -- run "mult" mult
+  run "perfectTree" perfectTree
   run "depthIs" depthIs
   run "nubbed" nubbed
   run "noconsec" noconsec
-  run "rev" rev
-  run "reverse" reverse_
+  -- run "rev" rev
+  -- run "reverse" reverse_
   run "even" even
   where
     run name prog = do
