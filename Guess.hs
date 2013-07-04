@@ -489,32 +489,36 @@ val :: Context -> [[Term] -> Maybe Bool]
 val = map func
 self :: Context -> Predicate
 self = head
+up :: Context -> [[Term] -> Maybe Bool]
+up = tail . val
 
 guess_ :: Int -> Context -> Program
 guess_ depth ctx
-  | evaluate (val ctx) p1 `implements` self ctx = p1
+  | evaluate (up ctx) p1 `implements` self ctx = p1
   | otherwise = p2
   where
     p1 = Program args cands
     p2 = Program args (cands ++ synth)
 
     args = predType (self ctx)
-    cands = filter consistentWithPred (candidates1 (map predType ctx))
+    cands = filter consistentWithPred (candidates1 args (map predType ctx))
     synth = filter makesProgress (candidates2 depth ctx pred')
 
     consistentWithPred c =
       evaluateClause (val ctx) c `consistentWith` self ctx
     makesProgress c =
       consistentWithPred c &&
-      extends (evaluateClause (val ctx) c) (evaluate (val ctx) p1) pred'
+      extends (evaluateClauses (val ctx) (c:cands)) (evaluateClauses (val ctx) cands) (self ctx)
     pred' = self ctx `except` evaluateClauses (val ctx) cands
+                     `except` evaluate (up ctx) p1
 
-candidates1 :: [[Type]] -> [Clause]
-candidates1 argss = sortBy (comparing clauseOrder) $ do
-  (i, args) <- zip [0..] argss
-  patts <- mapM patterns args
+candidates1 :: [Type] -> [[Type]] -> [Clause]
+candidates1 selfArgs argss = sortBy (comparing clauseOrder) $ do
+  patts <- mapM patterns selfArgs
   rhs <- Top:
-         map (App (Rec i)) (descending args patts)
+         concat
+         [ map (App (Rec i)) (descending args patts)
+         | (i, args) <- zip [0..] argss ]
   return (Clause patts rhs)
 
 descending :: [Type] -> [Pattern] -> [[Term]]
@@ -536,22 +540,22 @@ candidates2 d ctx pred = do
   patts <- sortBy (comparing patternsOrder) $ mapM patterns (predType pred)
   guard (not (all trivial patts))
   let pred' = matchPred patts pred
-      prog = Not (synthesise (d-1) (negate pred':ctx))
-      prog' = synthesise (rhsDepth prog-1) (pred':ctx)
+      prog = Not (synthesise (d-1) (negate pred') ctx)
+      prog' = synthesise (rhsDepth prog-1) pred' ctx
   return . Clause patts . Shrink prog $
     if evaluateRHS (val ctx) prog' `implements` pred' &&
       rhsVars prog' <= rhsVars prog
     then Just prog' else Nothing
 
-synthesise :: Int -> Context -> RHS
-synthesise depth ctx =
-  App (Call prog) (filter (relevant (self ctx) . varId) vars)
+synthesise :: Int -> Predicate -> Context -> RHS
+synthesise depth pred ctx =
+  App (Call prog) (filter (relevant pred . varId) vars)
   where
-    prog = guess_ depth (matchPred rels (self ctx):ctx)
+    prog = guess_ depth (matchPred rels pred:ctx)
     varId (Var _ i) = i
-    vars = zipWith Var (predType (self ctx)) [0..]
+    vars = zipWith Var (predType pred) [0..]
     rels = [
-        if relevant (self ctx) i then idP ty else nilP ty
+        if relevant pred i then idP ty else nilP ty
       | Var ty i <- vars ]
 
 relevant p i = not (irrelevant p i)
@@ -621,7 +625,7 @@ pred x = Predicate {
   }
 
 guess :: Pred a => a -> Program
-guess x = {- shrink (pred x) -} (guess_ 10 [pred x])
+guess x = shrink (pred x) (guess_ 10 [pred x])
 
 -- Examples.
 sorted :: [Int] -> Bool
