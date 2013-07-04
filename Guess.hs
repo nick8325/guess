@@ -649,10 +649,17 @@ plus = predicate2 (+)
 mult :: Int -> Int -> Int -> Bool
 mult = predicate2 (*)
 
+perfectTree :: Int -> Tree () -> Bool
+perfectTree 0 Leaf = True
+perfectTree n (Node _ l r) = perfectTree (n-1) l && perfectTree (n-1) r
+perfectTree _ _ = False
+
+treeDepth :: Tree () -> Int
+treeDepth Leaf = 0
+treeDepth (Node _ l r) = 1 + (treeDepth l `max` treeDepth r)
+
 depthIs :: Int -> Tree () -> Bool
-depthIs 0 Leaf = True
-depthIs n (Node _ l r) = depthIs (n-1) l && depthIs (n-1) r
-depthIs _ _ = False
+depthIs n t = treeDepth t == n
 
 predicate :: Eq b => (a -> b) -> (a -> b -> Bool)
 predicate f x y = f x == y
