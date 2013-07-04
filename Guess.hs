@@ -493,24 +493,34 @@ up :: Context -> [[Term] -> Maybe Bool]
 up = tail . val
 
 guess_ :: Int -> Context -> Program
-guess_ depth ctx
-  | evaluate (up ctx) p1 `implements` self ctx = p1
-  | otherwise = p2
+guess_ depth ctx = Program args synth
   where
-    p1 = Program args cands
-    p2 = Program args (cands ++ synth)
-
     args = predType (self ctx)
     cands = filter consistentWithPred (candidates1 args (map predType ctx))
-    synth = filter makesProgress (candidates2 depth ctx pred')
+    synth = saturate (:) cands makesProgress finished (candidates2 depth ctx pred')
 
+    finished cs = evaluate (up ctx) (Program args cs) `implements` self ctx
     consistentWithPred c =
       evaluateClause (val ctx) c `consistentWith` self ctx
-    makesProgress c =
+    makesProgress c cands =
       consistentWithPred c &&
-      extends (evaluateClauses (val ctx) (c:cands)) (evaluateClauses (val ctx) cands) (self ctx)
+      extends (evaluateClauses (val ctx) (c:cands))
+              (evaluateClauses (val ctx) cands)
+              (self ctx)
     pred' = self ctx `except` evaluateClauses (val ctx) cands
-                     `except` evaluate (up ctx) p1
+                     `except` evaluate (up ctx) (Program args cands)
+
+saturate ::
+  (a -> b -> b) ->
+  b ->
+  (a -> b -> Bool) ->
+  (b -> Bool) ->
+  [a] -> b
+saturate op e p q xs | q e = e
+saturate op e p q [] = e
+saturate op e p q (x:xs)
+  | p x e = saturate op (op x e) p q xs
+  | otherwise = saturate op e p q xs
 
 candidates1 :: [Type] -> [[Type]] -> [Clause]
 candidates1 selfArgs argss = sortBy (comparing clauseOrder) $ do
