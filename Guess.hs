@@ -66,11 +66,12 @@ at msg (x:xs) n = at msg xs (n-1)
 data Term = Nil Type | Cons Type Term Term | Var Type Int
   deriving (Eq, Ord)
 
-data Type = Unit | Nat | List Type | Tree Type | Pair Type Type deriving (Eq, Ord)
+data Type = Unit | Nat | Bool | List Type | Tree Type | Pair Type Type deriving (Eq, Ord)
 
 invert :: Type -> Maybe (Type, Type)
 invert Unit = Nothing
 invert Nat = Just (Unit, Nat)
+invert Bool = Just (Unit, Unit)
 invert (List ty) = Just (ty, List ty)
 invert (Tree ty) = Just (ty, Pair (Tree ty) (Tree ty))
 invert (Pair ty tz) = Just (ty, tz)
@@ -78,6 +79,7 @@ invert (Pair ty tz) = Just (ty, tz)
 instance Show Type where
   show Unit = "()"
   show Nat = "Nat"
+  show Bool = "Bool"
   show (List ty) = "[" ++ show ty ++ "]"
   show (Tree ty) = "{" ++ show ty ++ "}"
   show (Pair ty tz) = "(" ++ show ty ++ "," ++ show tz ++ ")"
@@ -90,10 +92,13 @@ termType (Var ty _) = ty
 instance Show Term where
   showsPrec _ (Nil Unit) = showString "()"
   showsPrec _ (Nil Nat) = showString "0"
+  showsPrec _ (Nil Bool) = showString "false"
+  showsPrec _ (Cons Bool _ _) = showString "true"
   showsPrec _ (Nil (List _)) = showString "[]"
   showsPrec _ (Nil (Tree _)) = showString "{}"
   showsPrec n (Cons Nat x y) =
-    showParen (n > 10) (showsPrec 11 y . showString "+1")
+    showString "succ(" . showsPrec 11 y . showString ")"
+    --showParen (n > 10) (showsPrec 11 y . showString "+1")
   showsPrec n (Cons (List _) x y) =
     showString "[" . showsPrec 0 x . showString "|" . showsPrec 0 y . showString "]"
   showsPrec n (Cons Unit x y) =
@@ -122,13 +127,20 @@ instance Lisp Int where
   fromTerm (Nil Nat) = 0
   fromTerm (Cons Nat (Nil Unit) x) = succ (fromTerm x)
 
-  sample _ = listOf (nil Unit) Nat 3
+  sample _ = listOf (nil Unit) Nat 1
+
+instance Lisp Bool where
+  fromTerm (Nil Bool) = False
+  fromTerm (Cons Bool _ _) = True
+
+  sample _ =
+    InsertNil Bool (ConsS Bool (nil Unit) (nil Unit))
 
 instance Lisp a => Lisp [a] where
   fromTerm (Nil _) = []
   fromTerm (Cons _ x xs) = fromTerm x:fromTerm xs
 
-  sample xs = listOf sx (List (setType sx)) 3
+  sample xs = listOf sx (List (setType sx)) 5
     where sx = sample (head xs)
 
 instance (Lisp a, Lisp b) => Lisp (a, b) where
@@ -518,7 +530,7 @@ candidates2 d ctx pred = do
   patts <- sortBy (comparing patternsOrder) $ mapM patterns (predType pred)
   guard (not (all trivial patts))
   let pred' = matchPred patts pred
-      prog = Not (synthesise (d-1) (negate pred') ctx)
+      prog = {- Not -} (synthesise (d-1) ({- negate -} pred') ctx)
       prog' = synthesise (rhsDepth prog-1) pred' ctx
   return . Clause patts . Shrink prog $
     if evaluateRHS (val ctx) prog' `implements` pred' &&
@@ -561,9 +573,9 @@ candidates (Program args cs) =
 candidateClausess :: [Clause] -> [[Clause]]
 candidateClausess [] = []
 candidateClausess (c:cs) =
-  cs:
   map (:cs) (candidateClauses c) ++
-  map (c:) (candidateClausess cs)
+  map (c:) (candidateClausess cs) ++
+  [cs]
 
 candidateClauses :: Clause -> [Clause]
 candidateClauses (Clause patt rhs) =
@@ -608,6 +620,9 @@ guess x = shrink (pred x) (guess_ 10 [pred x])
 -- Examples.
 sorted :: [Int] -> Bool
 sorted xs = xs == sort xs
+
+even_parity :: [Bool] -> Bool
+even_parity = foldr (/=) True
 
 sortPred :: [Int] -> [Int] -> Bool
 sortPred xs ys = ys == sort xs
@@ -693,32 +708,33 @@ nasty = Predicate {
   }
 
 main = do
-  run "nasty" nasty
-  run "sorted" sorted
+  -- run "nasty" nasty
+  -- run "sorted" sorted
   -- run "sortPred" sortPred
   -- run "anyLeq" anyLeq
   -- run "allLeq" allLeq
   -- run "append" append
-  run "zipRev" zipRev
-  run "lastDrop" lastDrop
+  -- run "zipRev" zipRev
+  -- run "lastDrop" lastDrop
   -- run "leq" leq
-  run "plus" plus
+  -- run "plus" plus
   -- run "mult" mult
-  run "perfectTree" perfectTree
-  run "depthIs" depthIs
-  run "nubbed" nubbed
-  run "noconsec" noconsec
+  -- run "perfectTree" perfectTree
+  -- run "depthIs" depthIs
+  -- run "nubbed" nubbed
+  -- run "noconsec" noconsec
   -- run "rev" rev
   -- run "reverse" reverse_
-  run "even" even
+  -- run "even" even
+  run "even_parity" even_parity
   where
     run name prog = do
       putStrLn ("=== " ++ name)
       run1 prog
-      putStrLn ("=== not . " ++ name)
-      run1 (negate (pred prog))
+      --- putStrLn ("=== not . " ++ name)
+      -- run1 (negate (pred prog))
     run1 prog = do
-      r <- timeout 10000000 (print (guess prog))
+      r <- timeout 30000000 (print (guess prog))
       when (r == Nothing) $ do
         putStrLn "Timeout!"
         putStrLn ""
